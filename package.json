@@ -20,6 +20,6 @@
   },
   "devDependencies": {
     "@lifelinejs/lifeline": "^0.1.0",
-    "@twextjs/twext": "^2.1.2"
+    "@twextjs/twext": "^2.2.0"
   }
 }
