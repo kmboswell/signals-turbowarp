@@ -16,7 +16,8 @@
   "scripts": {
     "build": "extend build",
     "validate": "extend validate",
-    "dev": "extend dev"
+    "dev": "extend dev",
+    "test": "node --test"
   },
   "devDependencies": {
     "@lifelinejs/lifeline": "^0.1.0",

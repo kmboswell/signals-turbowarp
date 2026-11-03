@@ -27,6 +27,18 @@ export const methods = {
 // Everything below is emitted at the top level of the compiled extension, so
 // the block handlers in src/blocks close over these declarations.
 export function setup() {
+  // extend.yml owns the extension id, but the compiled extension cannot read
+  // the manifest, so it is repeated here. Keep the two in sync.
+  const EXTENSION_ID = "signals";
+
+  // Scratch composes an extension block's full opcode as
+  // `<extension id>_<opcode>`, which is what startHats() looks up.
+  const HAT_OPCODES = {
+    whenActionReceived: `${EXTENSION_ID}_whenActionReceived`,
+    whenQueryRequested: `${EXTENSION_ID}_whenQueryRequested`,
+    whenEventEmitted: `${EXTENSION_ID}_whenEventEmitted`,
+  };
+
   const state = {
     currentData: null,
     errorState: {
@@ -52,9 +64,9 @@ export function setup() {
   if (Scratch.vm && Scratch.vm.runtime) {
     runtime = Scratch.vm.runtime;
     runtime.on("BEFORE_EXECUTE", () => {
-      runtime.startHats("signalsextension_whenActionReceived");
-      runtime.startHats("signalsextension_whenQueryRequested");
-      runtime.startHats("signalsextension_whenEventEmitted");
+      runtime.startHats(HAT_OPCODES.whenActionReceived);
+      runtime.startHats(HAT_OPCODES.whenQueryRequested);
+      runtime.startHats(HAT_OPCODES.whenEventEmitted);
     });
   }
 
