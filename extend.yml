@@ -77,6 +77,14 @@ blocks:
         type: string
         defaultValue: '{"key": "value"}'
 
+  - opcode: setQueryTimeout
+    blockType: command
+    text: "set query timeout (ms) [MS]"
+    arguments:
+      MS:
+        type: number
+        defaultValue: 2000
+
   - opcode: emitEvent
     blockType: command
     text: "emit event [NAME] with data [DATA]"

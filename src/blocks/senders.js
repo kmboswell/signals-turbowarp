@@ -58,16 +58,23 @@ export function querySignal(args) {
   }
   state.queryQueues.get(name).push({ id: queryId, data: args.DATA });
 
+  const timeoutMs = state.queryTimeoutMs;
+
   return new Promise((resolve) => {
     const pending = { resolve, settled: false, timer: null, thread: null };
     state.pendingQueries.set(queryId, pending);
 
-    pending.timer = setTimeout(() => {
-      // A result or error already reached the caller; never overwrite it.
-      if (!state.pendingQueries.has(queryId)) return;
-      raiseErrorInternal("SignalsError", "Query did not return a value.");
-      settleQuery(queryId, "");
-    }, 2000);
+    if (timeoutMs > 0) {
+      pending.timer = setTimeout(() => {
+        // A result or error already reached the caller; never overwrite it.
+        if (!state.pendingQueries.has(queryId)) return;
+        raiseErrorInternal(
+          "SignalsError",
+          `Query '${name}' did not return a value within ${timeoutMs} ms.`,
+        );
+        settleQuery(queryId, "");
+      }, timeoutMs);
+    }
 
     try {
       if (runtime) {
@@ -85,6 +92,18 @@ export function querySignal(args) {
       settleQuery(queryId, "");
     }
   });
+}
+
+export function setQueryTimeout(args) {
+  const ms = Math.floor(Number(args.MS));
+  if (!Number.isFinite(ms) || ms < 0) {
+    raiseErrorInternal(
+      "SignalsError",
+      `Invalid query timeout '${args.MS}': expected a number of milliseconds, or 0 to disable the timeout.`,
+    );
+    return;
+  }
+  state.queryTimeoutMs = ms;
 }
 
 export function emitEvent(args) {

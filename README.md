@@ -28,6 +28,13 @@ describe the most recent signal. A handler's `raise error` still counts: the
 caller sees it once the signal returns. Use `clear error state` to reset the
 state by hand at any point.
 
+### Query timeouts
+
+A query waits 2000 ms for a handler to return a value, then reports
+`Query 'NAME' did not return a value within 2000 ms.` Use
+`set query timeout (ms) [MS]` to change the wait, or set it to `0` to wait until
+the handler returns.
+
 ### Authors
 
 > **AI DIsclosure:** AI was used in the development of Signals.

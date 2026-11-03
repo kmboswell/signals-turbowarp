@@ -269,6 +269,72 @@ test("each signal starts from a clean error state", () => {
   assert.equal(extension.lastErrorMessage(), "");
 });
 
+test("set query timeout changes the timeout and its message", async () => {
+  const { extension, runtime } = loadExtension();
+  runtime.targets = [
+    makeTarget([
+      { id: "qhat", opcode: hatOpcode(extension, "whenQueryRequested"), name: "ask" },
+    ]),
+  ];
+
+  extension.setQueryTimeout({ MS: 30 });
+  const started = Date.now();
+  const query = extension.querySignal({ NAME: "ask", DATA: "1" });
+  assert.equal(await query, "");
+
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed >= 25, `query timed out after only ${elapsed}ms`);
+  assert.ok(elapsed < 1000, `query timeout took ${elapsed}ms`);
+  assert.equal(
+    extension.lastErrorMessage(),
+    "Query 'ask' did not return a value within 30 ms.",
+  );
+});
+
+test("a query timeout of 0 waits for the handler", async () => {
+  const { extension, runtime } = loadExtension();
+  runtime.targets = [
+    makeTarget([
+      { id: "qhat", opcode: hatOpcode(extension, "whenQueryRequested"), name: "ask" },
+    ]),
+  ];
+
+  extension.setQueryTimeout({ MS: 0 });
+  const query = extension.querySignal({ NAME: "ask", DATA: "1" });
+
+  let result;
+  query.then((value) => {
+    result = value;
+  });
+  await sleep(60);
+  assert.equal(result, undefined, "the query should still be waiting");
+
+  const util = makeUtil("qhat");
+  assert.equal(extension.whenQueryRequested({ NAME: "ask" }, util), true);
+  extension.returnValue({ VALUE: "late" }, util);
+  assert.equal(await query, "late");
+  assert.equal(extension.didErrorOccur(), false);
+});
+
+test("a timeout never overwrites a handler error", async () => {
+  const { extension, runtime } = loadExtension();
+  runtime.targets = [
+    makeTarget([
+      { id: "qhat", opcode: hatOpcode(extension, "whenQueryRequested"), name: "ask" },
+    ]),
+  ];
+
+  extension.setQueryTimeout({ MS: 30 });
+  const query = extension.querySignal({ NAME: "ask", DATA: "1" });
+  const util = makeUtil("qhat");
+  assert.equal(extension.whenQueryRequested({ NAME: "ask" }, util), true);
+  extension.raiseError({ TYPE: "SignalsError", MESSAGE: "boom" }, util);
+  assert.equal(await query, "");
+
+  await sleep(60);
+  assert.equal(extension.lastErrorMessage(), "boom");
+});
+
 test("the bundle contains no dynamic import", () => {
   assert.equal(bundle.includes("import("), false);
 });

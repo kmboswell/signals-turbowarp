@@ -9,6 +9,7 @@ export const blocks = {
   returnValue: handlers.returnValue,
   fireAction: senders.fireAction,
   querySignal: senders.querySignal,
+  setQueryTimeout: senders.setQueryTimeout,
   emitEvent: senders.emitEvent,
   getSignalData: senders.getSignalData,
   raiseError: errors.raiseError,
@@ -39,6 +40,8 @@ export function setup() {
     whenEventEmitted: `${EXTENSION_ID}_whenEventEmitted`,
   };
 
+  const DEFAULT_QUERY_TIMEOUT_MS = 2000;
+
   // Scratch's Thread statuses; a thread that is neither running nor done is
   // parked on a yield or a promise.
   const THREAD_STATUS_DONE = 0;
@@ -65,6 +68,8 @@ export function setup() {
     eventQueues: new Map(),
     queryQueues: new Map(),
     queryCounter: 0,
+    // A timeout of 0 waits until the handler returns.
+    queryTimeoutMs: DEFAULT_QUERY_TIMEOUT_MS,
     // queryId -> { resolve, settled, timer, thread }
     pendingQueries: new Map(),
     threadQueryId: new Map(),
