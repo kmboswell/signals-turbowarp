@@ -248,6 +248,27 @@ test("a running non-literal handler counts as live", () => {
   assert.equal(extension.didErrorOccur(), false, extension.lastErrorMessage());
 });
 
+test("each signal starts from a clean error state", () => {
+  const { extension } = loadExtension();
+
+  extension.fireAction({ NAME: "missing", DATA: "1" });
+  assert.equal(extension.didErrorOccur(), true);
+  assert.equal(extension.lastErrorMessage(), "This action/query has no handler.");
+
+  extension.emitEvent({ NAME: "anything", DATA: "1" });
+  assert.equal(extension.didErrorOccur(), false);
+  assert.equal(extension.lastErrorType(), "");
+  assert.equal(extension.lastErrorMessage(), "");
+
+  extension.querySignal({ NAME: "missing", DATA: "1" });
+  assert.equal(extension.didErrorOccur(), true);
+
+  extension.clearErrorState();
+  assert.equal(extension.didErrorOccur(), false);
+  assert.equal(extension.lastErrorType(), "");
+  assert.equal(extension.lastErrorMessage(), "");
+});
+
 test("the bundle contains no dynamic import", () => {
   assert.equal(bundle.includes("import("), false);
 });

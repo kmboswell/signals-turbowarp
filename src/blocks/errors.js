@@ -1,6 +1,6 @@
-// `state`, `raiseErrorInternal`, `abandonPendingQuery` and `settleQuery` are
-// declared by the `setup` export in src/index.js and are in scope here once the
-// extension is compiled.
+// `state`, `raiseErrorInternal`, `clearErrorStateInternal`, `abandonPendingQuery`
+// and `settleQuery` are declared by the `setup` export in src/index.js and are
+// in scope here once the extension is compiled.
 export function raiseError(args, util) {
   const type = args.TYPE || "Error";
   const message = args.MESSAGE || "An error occurred.";
@@ -31,11 +31,7 @@ export function lastErrorMessage() {
 }
 
 export function clearErrorState() {
-  state.errorState = {
-    occurred: false,
-    type: "",
-    message: "",
-  };
+  clearErrorStateInternal();
 }
 
 export function registerErrorType(args) {

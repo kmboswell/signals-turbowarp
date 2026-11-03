@@ -1,7 +1,9 @@
-// `state`, `getActiveHandlerCount`, `raiseErrorInternal`, `runtime` and
-// `HAT_OPCODES` are declared by the `setup` export in src/index.js and are in
-// scope here once the extension is compiled.
+// `state`, `getActiveHandlerCount`, `raiseErrorInternal`, `clearErrorStateInternal`,
+// `runtime` and `HAT_OPCODES` are declared by the `setup` export in src/index.js
+// and are in scope here once the extension is compiled.
 export function fireAction(args) {
+  // did error occur? describes this signal, not the one before it.
+  clearErrorStateInternal();
   const name = args.NAME;
   const count = getActiveHandlerCount(
     state.actionHandlers,
@@ -32,6 +34,8 @@ export function fireAction(args) {
 }
 
 export function querySignal(args) {
+  // did error occur? describes this signal, not the one before it.
+  clearErrorStateInternal();
   const name = args.NAME;
   const count = getActiveHandlerCount(
     state.queryHandlers,
@@ -84,6 +88,8 @@ export function querySignal(args) {
 }
 
 export function emitEvent(args) {
+  // did error occur? describes this event, not the one before it.
+  clearErrorStateInternal();
   const name = args.NAME;
   if (!state.eventQueues.has(name)) {
     state.eventQueues.set(name, []);

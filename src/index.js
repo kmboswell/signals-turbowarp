@@ -180,6 +180,14 @@ export function setup() {
     return live.size;
   }
 
+  function clearErrorStateInternal() {
+    state.errorState = {
+      occurred: false,
+      type: "",
+      message: "",
+    };
+  }
+
   function raiseErrorInternal(type, message) {
     const validType = state.registeredErrorTypes.has(type)
       ? type

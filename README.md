@@ -20,6 +20,14 @@ _Use inter-process communication in your TurboWarp projects._
 
 Signals is a TurboWarp extension that allows you to send and receive data and broadcasts between different sprites, and even the Stage. It has a custom error system with an error type (example: `SignalsError`) and a custom message, to let your users (and yourself) know what went wrong and why.
 
+### Error state
+
+Every `fire action`, `query` and `emit event` block starts by clearing the error
+state, so `did error occur?`, `last error type` and `last error message` always
+describe the most recent signal. A handler's `raise error` still counts: the
+caller sees it once the signal returns. Use `clear error state` to reset the
+state by hand at any point.
+
 ### Authors
 
 > **AI DIsclosure:** AI was used in the development of Signals.
