@@ -3,7 +3,11 @@
 // scope here once the extension is compiled.
 export function fireAction(args) {
   const name = args.NAME;
-  const count = getActiveHandlerCount(state.actionHandlers, name);
+  const count = getActiveHandlerCount(
+    state.actionHandlers,
+    name,
+    HAT_OPCODES.whenActionReceived,
+  );
 
   if (count === 0) {
     raiseErrorInternal("SignalsError", "This action/query has no handler.");
@@ -29,7 +33,11 @@ export function fireAction(args) {
 
 export function querySignal(args) {
   const name = args.NAME;
-  const count = getActiveHandlerCount(state.queryHandlers, name);
+  const count = getActiveHandlerCount(
+    state.queryHandlers,
+    name,
+    HAT_OPCODES.whenQueryRequested,
+  );
 
   if (count === 0) {
     raiseErrorInternal("SignalsError", "This action/query has no handler.");

@@ -39,9 +39,16 @@ export function setup() {
     whenEventEmitted: `${EXTENSION_ID}_whenEventEmitted`,
   };
 
-  // Scratch's Thread.STATUS_DONE; a thread in this state will run no more
-  // blocks, so a handler that never reached `return value` is over.
+  // Scratch's Thread statuses; a thread that is neither running nor done is
+  // parked on a yield or a promise.
   const THREAD_STATUS_DONE = 0;
+  const THREAD_STATUS_RUNNING = 2;
+
+  // How recently a hat predicate must have run for a hat whose NAME is not a
+  // literal to count as a handler. Deliberately generous: a long frame or a
+  // throttled background tab can pause the runtime for seconds, and a handler
+  // thread can run for a while without the hat predicate running again.
+  const HAT_FALLBACK_WINDOW_MS = 60 * 1000;
 
   const state = {
     currentData: null,
@@ -77,25 +84,100 @@ export function setup() {
   }
 
   function registerHandler(handlersMap, name, util) {
-    if (!handlersMap.has(name)) {
-      handlersMap.set(name, new Map());
+    let blockMap = handlersMap.get(name);
+    if (!blockMap) {
+      blockMap = new Map();
+      handlersMap.set(name, blockMap);
     }
-    handlersMap.get(name).set(util.blockId, Date.now());
+    blockMap.set(util.blockId, { timestamp: Date.now(), thread: util.thread || null });
   }
 
-  function getActiveHandlerCount(handlersMap, name) {
+  function getBlock(target, blockId) {
+    const blocks = target && target.blocks;
+    if (!blocks || !blockId) return null;
+    if (typeof blocks.getBlock === "function") return blocks.getBlock(blockId) || null;
+    return (blocks._blocks && blocks._blocks[blockId]) || null;
+  }
+
+  // Top-level hat blocks of this opcode, keyed by block id, across every target.
+  function findHats(hatOpcode) {
+    const hats = new Map();
+    if (!runtime || !Array.isArray(runtime.targets)) return hats;
+    for (const target of runtime.targets) {
+      const blocks = target && target.blocks;
+      if (!blocks || !Array.isArray(blocks._scripts)) continue;
+      for (const blockId of blocks._scripts) {
+        const block = getBlock(target, blockId);
+        if (block && block.opcode === hatOpcode) {
+          hats.set(blockId, { target, block });
+        }
+      }
+    }
+    return hats;
+  }
+
+  // The name a hat is wired to, when that name is a literal. A reporter plugged
+  // into the NAME slot can only be evaluated by the runtime, so it has none.
+  function getLiteralName(target, block) {
+    if (block.fields && block.fields.NAME) {
+      const fieldValue = block.fields.NAME.value;
+      return fieldValue === undefined ? null : String(fieldValue);
+    }
+    const input = block.inputs && block.inputs.NAME;
+    if (!input) return null;
+    if (input.block && input.shadow && input.block !== input.shadow) return null;
+    const valueId = input.shadow || input.block;
+    if (!valueId) return null;
+    const valueBlock = getBlock(target, valueId);
+    if (!valueBlock || !valueBlock.fields || !valueBlock.fields.NAME) return null;
+    const fieldValue = valueBlock.fields.NAME.value;
+    return fieldValue === undefined ? null : String(fieldValue);
+  }
+
+  function isThreadRunning(record) {
+    const thread = record && record.thread;
+    if (!thread) return false;
+    if (typeof thread.status === "number") return thread.status === THREAD_STATUS_RUNNING;
+    return Array.isArray(runtime && runtime.threads) ? runtime.threads.includes(thread) : false;
+  }
+
+  function getActiveHandlerCount(handlersMap, name, hatOpcode) {
+    const hats = findHats(hatOpcode);
+    const live = new Set();
+
+    // Literal hats are read from the project itself, so a handler stays live
+    // even when its predicate has not run recently.
+    for (const [blockId, hat] of hats) {
+      if (getLiteralName(hat.target, hat.block) === name) {
+        live.add(blockId);
+      }
+    }
+
     const blockMap = handlersMap.get(name);
-    if (!blockMap) return 0;
+    if (!blockMap) return live.size;
+
     const now = Date.now();
-    let count = 0;
-    for (const [blockId, timestamp] of blockMap.entries()) {
-      if (now - timestamp < 300) {
-        count++;
+    for (const [blockId, record] of blockMap) {
+      if (live.has(blockId)) continue;
+      const hat = hats.get(blockId);
+      if (hat) {
+        const literal = getLiteralName(hat.target, hat.block);
+        if (literal !== null) {
+          // A literal name that does not match can never receive this signal.
+          if (!isThreadRunning(record)) blockMap.delete(blockId);
+          continue;
+        }
+      }
+      if (isThreadRunning(record)) {
+        live.add(blockId);
+      } else if (now - record.timestamp < HAT_FALLBACK_WINDOW_MS) {
+        live.add(blockId);
       } else {
         blockMap.delete(blockId);
       }
     }
-    return count;
+
+    return live.size;
   }
 
   function raiseErrorInternal(type, message) {

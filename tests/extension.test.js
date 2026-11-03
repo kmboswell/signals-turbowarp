@@ -213,6 +213,41 @@ test("a handler that ends without return value settles its query", async () => {
   assert.equal(await query, "");
 });
 
+test("a literal handler stays live across a long clock jump", () => {
+  const { extension, runtime, clock } = loadExtension();
+  runtime.targets = [
+    makeTarget([
+      { id: "ahat", opcode: hatOpcode(extension, "whenActionReceived"), name: "act" },
+    ]),
+  ];
+  extension.whenActionReceived({ NAME: "act" }, makeUtil("ahat"));
+
+  clock.time += 5000;
+  extension.fireAction({ NAME: "act", DATA: "1" });
+  assert.equal(extension.didErrorOccur(), false, extension.lastErrorMessage());
+});
+
+test("a running non-literal handler counts as live", () => {
+  const { extension, runtime, clock } = loadExtension();
+  runtime.targets = [
+    makeTarget([
+      {
+        id: "ahat",
+        opcode: hatOpcode(extension, "whenActionReceived"),
+        name: "act",
+        literal: false,
+      },
+    ]),
+  ];
+  const thread = makeThread();
+  extension.whenActionReceived({ NAME: "act" }, makeUtil("ahat", thread));
+
+  // Past the timestamp window, but the handler thread is still running.
+  clock.time += 120 * 1000;
+  extension.fireAction({ NAME: "act", DATA: "1" });
+  assert.equal(extension.didErrorOccur(), false, extension.lastErrorMessage());
+});
+
 test("the bundle contains no dynamic import", () => {
   assert.equal(bundle.includes("import("), false);
 });
