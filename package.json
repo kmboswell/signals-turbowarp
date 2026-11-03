@@ -1,25 +1,25 @@
 {
-  "name": "@kamixfox/signals-turbowarp",
-  "version": "2.0.0",
+  "name": "signals-turbowarp",
+  "version": "1.0.0",
   "description": "Use inter-process communication in your TurboWarp projects.",
-  "homepage": "https://github.com/kamixfox/signals-turbowarp#readme",
+  "homepage": "https://github.com/kmboswell/signals-turbowarp#readme",
   "bugs": {
-    "url": "https://github.com/kamixfox/signals-turbowarp/issues"
+    "url": "https://github.com/kmboswell/signals-turbowarp/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kamixfox/signals-turbowarp.git"
+    "url": "git+https://github.com/kmboswell/signals-turbowarp.git"
   },
   "license": "Apache-2.0",
-  "author": "Kamix Fox",
+  "author": "Kane Boswell",
   "type": "module",
   "scripts": {
-    "build": "twext build",
-    "validate": "twext validate",
-    "dev": "twext dev"
+    "build": "extend build",
+    "validate": "extend validate",
+    "dev": "extend dev"
   },
   "devDependencies": {
     "@lifelinejs/lifeline": "^0.1.0",
-    "@twextjs/twext": "^2.1.2"
+    "@triflare/extend": "^0.2.0"
   }
 }
