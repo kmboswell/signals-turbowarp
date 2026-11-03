@@ -47,7 +47,15 @@ export function querySignal(args) {
   state.queryQueues.get(name).push({ id: queryId, data: args.DATA });
 
   return new Promise((resolve) => {
-    state.queryResolvers.set(queryId, resolve);
+    const pending = { resolve, settled: false, timer: null, thread: null };
+    state.pendingQueries.set(queryId, pending);
+
+    pending.timer = setTimeout(() => {
+      // A result or error already reached the caller; never overwrite it.
+      if (!state.pendingQueries.has(queryId)) return;
+      raiseErrorInternal("SignalsError", "Query did not return a value.");
+      settleQuery(queryId, "");
+    }, 2000);
 
     try {
       if (runtime) {
@@ -55,27 +63,15 @@ export function querySignal(args) {
       }
     } catch (e) {
       raiseErrorInternal("SignalsError", e && e.message ? e.message : String(e));
-      if (state.queryResolvers.has(queryId)) {
-        state.queryResolvers.delete(queryId);
-        const queue = state.queryQueues.get(name);
-        if (queue) {
-          const index = queue.findIndex((request) => request.id === queryId);
-          if (index !== -1) {
-            queue.splice(index, 1);
-          }
+      const queue = state.queryQueues.get(name);
+      if (queue) {
+        const index = queue.findIndex((request) => request.id === queryId);
+        if (index !== -1) {
+          queue.splice(index, 1);
         }
-        resolve("");
       }
-      return;
+      settleQuery(queryId, "");
     }
-
-    setTimeout(() => {
-      if (state.queryResolvers.has(queryId)) {
-        state.queryResolvers.delete(queryId);
-        raiseErrorInternal("SignalsError", "Query did not return a value.");
-        resolve("");
-      }
-    }, 2000);
   });
 }
 

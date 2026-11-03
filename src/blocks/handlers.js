@@ -16,7 +16,9 @@ export function whenQueryRequested(args, util) {
   if (queue && queue.length > 0) {
     while (queue.length > 0) {
       const request = queue.shift();
-      if (request && request.id !== undefined && state.queryResolvers.has(request.id)) {
+      const pending = request ? state.pendingQueries.get(request.id) : undefined;
+      if (pending && !pending.settled) {
+        pending.thread = util.thread || null;
         state.threadQueryId.set(util.thread, request.id);
         state.threadData.set(util.thread, request.data);
         return true;
@@ -37,15 +39,9 @@ export function whenEventEmitted(args, util) {
 }
 
 export function returnValue(args, util) {
-  const queryId = state.threadQueryId.get(util.thread);
+  const queryId = takePendingQuery(util && util.thread);
   if (queryId !== undefined) {
-    state.threadQueryId.delete(util.thread);
-    state.threadData.delete(util.thread);
-    const resolve = state.queryResolvers.get(queryId);
-    if (resolve) {
-      state.queryResolvers.delete(queryId);
-      resolve(args.VALUE);
-    }
+    settleQuery(queryId, args.VALUE);
   }
   if (util) {
     if (typeof util.stopThread === "function") {

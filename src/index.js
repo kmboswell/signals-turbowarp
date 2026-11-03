@@ -39,6 +39,10 @@ export function setup() {
     whenEventEmitted: `${EXTENSION_ID}_whenEventEmitted`,
   };
 
+  // Scratch's Thread.STATUS_DONE; a thread in this state will run no more
+  // blocks, so a handler that never reached `return value` is over.
+  const THREAD_STATUS_DONE = 0;
+
   const state = {
     currentData: null,
     errorState: {
@@ -54,7 +58,8 @@ export function setup() {
     eventQueues: new Map(),
     queryQueues: new Map(),
     queryCounter: 0,
-    queryResolvers: new Map(),
+    // queryId -> { resolve, settled, timer, thread }
+    pendingQueries: new Map(),
     threadQueryId: new Map(),
     threadData: new Map(),
   };
@@ -64,6 +69,7 @@ export function setup() {
   if (Scratch.vm && Scratch.vm.runtime) {
     runtime = Scratch.vm.runtime;
     runtime.on("BEFORE_EXECUTE", () => {
+      settleFinishedQueryThreads();
       runtime.startHats(HAT_OPCODES.whenActionReceived);
       runtime.startHats(HAT_OPCODES.whenQueryRequested);
       runtime.startHats(HAT_OPCODES.whenEventEmitted);
@@ -104,5 +110,54 @@ export function setup() {
       type: validType,
       message: validMessage,
     };
+  }
+
+  // Each query is settled at most once: the handler's return value, its error,
+  // or the timeout, whichever happens first.
+  function settleQuery(queryId, value) {
+    const pending = state.pendingQueries.get(queryId);
+    if (!pending || pending.settled) return false;
+    pending.settled = true;
+    state.pendingQueries.delete(queryId);
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+      pending.timer = null;
+    }
+    pending.resolve(value);
+    return true;
+  }
+
+  // Forgets the query a handler thread is answering and hands back its id, if
+  // any, so the caller can settle it.
+  function takePendingQuery(thread) {
+    if (thread === undefined || thread === null) return undefined;
+    const queryId = state.threadQueryId.get(thread);
+    if (queryId !== undefined) {
+      state.threadQueryId.delete(thread);
+      state.threadData.delete(thread);
+    }
+    return queryId;
+  }
+
+  function abandonPendingQuery(util) {
+    const queryId = takePendingQuery(util && util.thread);
+    if (queryId !== undefined) {
+      settleQuery(queryId, "");
+    }
+  }
+
+  function isThreadFinished(thread) {
+    return !!thread && typeof thread.status === "number" && thread.status === THREAD_STATUS_DONE;
+  }
+
+  // A handler script that ends without running `return value` never settles its
+  // query on its own, so settle it once its thread is done instead of waiting
+  // out the timeout.
+  function settleFinishedQueryThreads() {
+    for (const [queryId, pending] of state.pendingQueries) {
+      if (!pending.settled && isThreadFinished(pending.thread)) {
+        settleQuery(queryId, "");
+      }
+    }
   }
 }

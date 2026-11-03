@@ -168,6 +168,51 @@ test("every hat opcode passed to startHats exists in getInfo()", async () => {
   }
 });
 
+test("a handler error settles its query well before the timeout", async () => {
+  const { extension, runtime } = loadExtension();
+  runtime.targets = [
+    makeTarget([
+      { id: "qhat", opcode: hatOpcode(extension, "whenQueryRequested"), name: "ask" },
+    ]),
+  ];
+
+  const util = makeUtil("qhat");
+  assert.equal(extension.whenQueryRequested({ NAME: "ask" }, util), false);
+
+  const started = Date.now();
+  const query = extension.querySignal({ NAME: "ask", DATA: "1" });
+  assert.equal(extension.whenQueryRequested({ NAME: "ask" }, util), true);
+  extension.raiseError({ TYPE: "SignalsError", MESSAGE: "handler exploded" }, util);
+
+  assert.equal(await query, "");
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 1000, `the handler's error took ${elapsed}ms to reach the caller`);
+  assert.equal(extension.didErrorOccur(), true);
+  assert.equal(extension.lastErrorMessage(), "handler exploded");
+  assert.equal(util.thread.status, 0, "raise error should stop the handler thread");
+});
+
+test("a handler that ends without return value settles its query", async () => {
+  const { extension, runtime, listeners } = loadExtension();
+  runtime.targets = [
+    makeTarget([
+      { id: "qhat", opcode: hatOpcode(extension, "whenQueryRequested"), name: "ask" },
+    ]),
+  ];
+
+  const registered = makeUtil("qhat");
+  assert.equal(extension.whenQueryRequested({ NAME: "ask" }, registered), false);
+
+  const query = extension.querySignal({ NAME: "ask", DATA: "1" });
+  const handlerThread = makeThread();
+  const handlerUtil = makeUtil("qhat", handlerThread);
+  assert.equal(extension.whenQueryRequested({ NAME: "ask" }, handlerUtil), true);
+
+  handlerThread.status = 0;
+  listeners.get("BEFORE_EXECUTE")();
+  assert.equal(await query, "");
+});
+
 test("the bundle contains no dynamic import", () => {
   assert.equal(bundle.includes("import("), false);
 });
