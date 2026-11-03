@@ -1,5 +1,5 @@
-import { state, registerHandler } from "./shared.js";
-
+// `state` and `registerHandler` are declared by the `setup` export in
+// src/index.js and are in scope here once the extension is compiled.
 export function whenActionReceived(args, util) {
   registerHandler(state.actionHandlers, args.NAME, util);
   const queue = state.actionQueues.get(args.NAME);

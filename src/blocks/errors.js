@@ -1,5 +1,5 @@
-import { state, raiseErrorInternal } from "./shared.js";
-
+// `state` and `raiseErrorInternal` are declared by the `setup` export in
+// src/index.js and are in scope here once the extension is compiled.
 export function raiseError(args, util) {
   const type = args.TYPE || "Error";
   const message = args.MESSAGE || "An error occurred.";

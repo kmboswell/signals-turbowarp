@@ -1,5 +1,6 @@
-import { state, getActiveHandlerCount, raiseErrorInternal, runtime } from "./shared.js";
-
+// `state`, `getActiveHandlerCount`, `raiseErrorInternal` and `runtime` are
+// declared by the `setup` export in src/index.js and are in scope here once the
+// extension is compiled.
 export function fireAction(args) {
   const name = args.NAME;
   const count = getActiveHandlerCount(state.actionHandlers, name);
@@ -19,7 +20,7 @@ export function fireAction(args) {
   state.actionQueues.get(name).push(args.DATA);
   try {
     if (runtime) {
-      runtime.startHats("signalsextension_whenActionReceived");
+      runtime.startHats("signals_whenActionReceived");
     }
   } catch (e) {
     raiseErrorInternal("SignalsError", e && e.message ? e.message : String(e));
@@ -50,7 +51,7 @@ export function querySignal(args) {
 
     try {
       if (runtime) {
-        runtime.startHats("signalsextension_whenQueryRequested");
+        runtime.startHats("signals_whenQueryRequested");
       }
     } catch (e) {
       raiseErrorInternal("SignalsError", e && e.message ? e.message : String(e));
@@ -86,7 +87,7 @@ export function emitEvent(args) {
   state.eventQueues.get(name).push(args.DATA);
   try {
     if (runtime) {
-      runtime.startHats("signalsextension_whenEventEmitted");
+      runtime.startHats("signals_whenEventEmitted");
     }
   } catch (e) {
     raiseErrorInternal("SignalsError", e && e.message ? e.message : String(e));

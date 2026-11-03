@@ -24,6 +24,8 @@ export const methods = {
   _getErrorTypes: errors._getErrorTypes,
 };
 
+// Everything below is emitted at the top level of the compiled extension, so
+// the block handlers in src/blocks close over these declarations.
 export function setup() {
   const state = {
     currentData: null,
@@ -91,15 +93,4 @@ export function setup() {
       message: validMessage,
     };
   }
-
-  const shared = {
-    state,
-    registerHandler,
-    getActiveHandlerCount,
-    raiseErrorInternal,
-    runtime,
-  };
-  import("./blocks/shared.js").then((mod) => {
-    mod.init(shared);
-  }).catch(() => {});
 }
