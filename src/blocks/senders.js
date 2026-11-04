@@ -1,6 +1,6 @@
 // `state`, `getActiveHandlerCount`, `raiseErrorInternal`, `clearErrorStateInternal`,
-// `runtime` and `HAT_OPCODES` are declared by the `setup` export in src/index.js
-// and are in scope here once the extension is compiled.
+// `runtime`, `HAT_OPCODES` and `MAX_TIMEOUT_MS` are declared by the `setup`
+// export in src/index.js and are in scope here once the extension is compiled.
 export function fireAction(args) {
   // did error occur? describes this signal, not the one before it.
   clearErrorStateInternal();
@@ -95,15 +95,20 @@ export function querySignal(args) {
 }
 
 export function setQueryTimeout(args) {
-  const ms = Math.floor(Number(args.MS));
-  if (!Number.isFinite(ms) || ms < 0) {
+  const raw = args.MS;
+  const value = typeof raw === "string" ? raw.trim() : raw;
+  const ms = Math.floor(Number(value));
+  // A blank value converts to 0, which would silently disable the timeout
+  // instead of reporting the empty input.
+  if (value === "" || !Number.isFinite(ms) || ms < 0) {
     raiseErrorInternal(
       "SignalsError",
       `Invalid query timeout '${args.MS}': expected a number of milliseconds, or 0 to disable the timeout.`,
     );
     return;
   }
-  state.queryTimeoutMs = ms;
+  // Longer delays overflow setTimeout() and fire almost immediately.
+  state.queryTimeoutMs = Math.min(ms, MAX_TIMEOUT_MS);
 }
 
 export function emitEvent(args) {

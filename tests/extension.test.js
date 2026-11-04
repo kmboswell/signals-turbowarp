@@ -323,6 +323,50 @@ test("a query timeout of 0 waits for the handler", async () => {
   assert.equal(extension.didErrorOccur(), false);
 });
 
+test("a blank query timeout is rejected instead of disabling the timeout", async () => {
+  const { extension, runtime } = loadExtension();
+  runtime.targets = [
+    makeTarget(
+      [{ id: "qhat", opcode: hatOpcode(extension, "whenQueryRequested"), name: "ask" }],
+      "sprite",
+    ),
+  ];
+
+  extension.setQueryTimeout({ MS: 40 });
+  extension.setQueryTimeout({ MS: "   " });
+  assert.equal(extension.didErrorOccur(), true);
+  assert.match(extension.lastErrorMessage(), /Invalid query timeout/);
+
+  // The blank value must not have been read as 0, which never times out.
+  const query = extension.querySignal({ NAME: "ask", DATA: "1" });
+  const answer = await Promise.race([query, sleep(1000).then(() => "still waiting")]);
+  assert.equal(answer, "");
+});
+
+test("an oversized query timeout is clamped to the longest timer", async () => {
+  const { extension, runtime } = loadExtension();
+  const target = makeTarget(
+    [{ id: "qhat", opcode: hatOpcode(extension, "whenQueryRequested"), name: "ask" }],
+    "sprite",
+  );
+  runtime.targets = [target];
+
+  // Anything above setTimeout's maximum fires after 1 ms unless it is clamped.
+  extension.setQueryTimeout({ MS: 1e12 });
+  const query = extension.querySignal({ NAME: "ask", DATA: "1" });
+  let settled = false;
+  query.then(() => {
+    settled = true;
+  });
+  await sleep(60);
+  assert.equal(settled, false, "an oversized timeout must not fire straight away");
+
+  const util = makeUtil("qhat", makeThread(), target);
+  assert.equal(extension.whenQueryRequested({ NAME: "ask" }, util), true);
+  extension.returnValue({ VALUE: "late" }, util);
+  assert.equal(await query, "late");
+});
+
 test("a timeout never overwrites a handler error", async () => {
   const { extension, runtime } = loadExtension();
   runtime.targets = [
