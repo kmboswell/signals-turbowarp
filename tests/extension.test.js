@@ -74,8 +74,9 @@ function hatOpcode(extension, opcode) {
   return `${extension.getInfo().id}_${opcode}`;
 }
 
-// Builds one target holding top-level hat blocks. A literal NAME is stored in
-// the shadow block; `literal: false` plugs a reporter into the slot instead.
+// Builds one target holding top-level hat blocks. The runtime stores a literal
+// NAME in a shadow block field named after the shadow's opcode ("TEXT");
+// `literal: false` plugs a reporter into the slot instead.
 function makeTarget(hats) {
   const blocks = new Map();
   for (const hat of hats) {
@@ -89,7 +90,7 @@ function makeTarget(hats) {
     blocks.set(valueId, {
       opcode: "text",
       inputs: {},
-      fields: { NAME: { name: "NAME", value: hat.name } },
+      fields: { TEXT: { name: "TEXT", value: hat.name } },
     });
     blocks.set(hat.id, {
       opcode: hat.opcode,
@@ -391,13 +392,28 @@ test("each emission reaches every event handler once", () => {
   assert.equal(extension.whenEventEmitted({ NAME: "evt" }, b), false);
 });
 
-test("an emission no handler picked up does not stall later ones", () => {
+test("an emission waits for a handler that is busy", () => {
   const { extension, runtime, listeners } = loadExtension();
   runtime.targets = [
     makeTarget([
       { id: "eHat", opcode: hatOpcode(extension, "whenEventEmitted"), name: "evt" },
     ]),
   ];
+
+  extension.emitEvent({ NAME: "evt", DATA: "payload" });
+  // The handler does not poll for a while, as a script that is still running
+  // would not: the emission has to wait for it instead of being dropped.
+  for (let poll = 0; poll < 6; poll += 1) {
+    listeners.get("BEFORE_EXECUTE")();
+  }
+
+  const util = makeUtil("eHat");
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, util), true);
+  assert.equal(extension.getSignalData({}, util), "payload");
+});
+
+test("an emission no handler picked up does not stall later ones", () => {
+  const { extension, runtime, listeners } = loadExtension();
 
   extension.emitEvent({ NAME: "evt", DATA: "lost" });
   for (let poll = 0; poll < 4; poll += 1) {

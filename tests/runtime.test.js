@@ -24,10 +24,16 @@ const runtimeTest = VirtualMachine ? test : test.skip;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bundle = readFileSync(resolve(root, "dist/extension.js"), "utf8");
 
-const HAT_OPCODE = "signals_whenEventEmitted";
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-// Scratch projects require at least one costume per target; the sprite is
-// never rendered, so the asset is never loaded.
+const HAT = {
+  action: "signals_whenActionReceived",
+  query: "signals_whenQueryRequested",
+  event: "signals_whenEventEmitted",
+};
+
+// Scratch projects require at least one costume per target; nothing is ever
+// rendered, so the asset is never loaded.
 const COSTUME = {
   name: "backdrop1",
   dataFormat: "svg",
@@ -37,9 +43,82 @@ const COSTUME = {
   rotationCenterY: 180,
 };
 
-// One target per handler, each incrementing the stage's `runs` variable from
-// its `when event` hat.
-function makeProject(handlers) {
+const BLOCK_TYPES = {
+  COMMAND: "command",
+  REPORTER: "reporter",
+  BOOLEAN: "boolean",
+  HAT: "hat",
+  EVENT: "event",
+  CONDITIONAL: "conditional",
+  LOOP: "loop",
+  BUTTON: "button",
+  LABEL: "label",
+};
+
+const ARGUMENT_TYPES = {
+  STRING: "string",
+  NUMBER: "number",
+  BOOLEAN: "boolean",
+  ANGLE: "angle",
+  COLOR: "color",
+};
+
+let blockCounter = 0;
+
+// One script: a hat with a text argument stored the way a saved project stores
+// it (an inline text primitive in the NAME input), followed by commands.
+function script(hatOpcode, name, body = []) {
+  const blocks = {};
+  const hatId = `hat${blockCounter++}`;
+  const bodyIds = body.map(() => `block${blockCounter++}`);
+
+  blocks[hatId] = {
+    opcode: hatOpcode,
+    next: bodyIds[0] ?? null,
+    parent: null,
+    inputs: { NAME: [1, [10, name]] },
+    fields: {},
+    shadow: false,
+    topLevel: true,
+    x: 0,
+    y: 0,
+  };
+
+  body.forEach((command, index) => {
+    blocks[bodyIds[index]] = {
+      opcode: command.opcode,
+      next: bodyIds[index + 1] ?? null,
+      parent: index === 0 ? hatId : bodyIds[index - 1],
+      inputs: command.inputs ?? {},
+      fields: command.fields ?? {},
+      shadow: false,
+      topLevel: false,
+    };
+  });
+
+  return blocks;
+}
+
+const INCREMENT = {
+  opcode: "data_changevariableby",
+  inputs: { VALUE: [1, [4, "1"]] },
+  fields: { VARIABLE: ["runs", "runsVar"] },
+};
+const RAISE = {
+  opcode: "signals_raiseError",
+  inputs: { MESSAGE: [1, [10, "boom"]] },
+  fields: { TYPE: ["SignalsError", null] },
+};
+const RETURN_SEVEN = {
+  opcode: "signals_returnValue",
+  inputs: { VALUE: [1, [10, "7"]] },
+};
+const WAIT = {
+  opcode: "control_wait",
+  inputs: { DURATION: [1, [5, "0.05"]] },
+};
+
+function makeProject(scripts) {
   const targets = [
     {
       isStage: true,
@@ -61,37 +140,14 @@ function makeProject(handlers) {
     },
   ];
 
-  handlers.forEach((name, index) => {
-    const hatId = `hat${index}`;
-    const runId = `${hatId}run`;
+  scripts.forEach((blocks, index) => {
     targets.push({
       isStage: false,
       name: `Handler${index}`,
       variables: {},
       lists: {},
       broadcasts: {},
-      blocks: {
-        [hatId]: {
-          opcode: HAT_OPCODE,
-          next: runId,
-          parent: null,
-          inputs: {},
-          fields: { NAME: [name, null] },
-          shadow: false,
-          topLevel: true,
-          x: 0,
-          y: 0,
-        },
-        [runId]: {
-          opcode: "data_changevariableby",
-          next: null,
-          parent: hatId,
-          inputs: { VALUE: [1, [4, "1"]] },
-          fields: { VARIABLE: ["runs", "runsVar"] },
-          shadow: false,
-          topLevel: false,
-        },
-      },
+      blocks,
       comments: {},
       currentCostume: 0,
       costumes: [COSTUME],
@@ -126,16 +182,8 @@ function loadExtension() {
       },
     },
     vm: virtualMachine,
-    BlockType: {
-      COMMAND: "command",
-      REPORTER: "reporter",
-      BOOLEAN: "boolean",
-      HAT: "hat",
-    },
-    ArgumentType: {
-      STRING: "string",
-      NUMBER: "number",
-    },
+    BlockType: BLOCK_TYPES,
+    ArgumentType: ARGUMENT_TYPES,
   };
 
   const sandbox = { Scratch, Date, setTimeout, clearTimeout, console };
@@ -153,10 +201,10 @@ function registerExtension(runtime, extension) {
     if (typeof block !== "object") continue;
     const opcode = `${info.id}_${block.opcode}`;
     runtime._primitives[opcode] = extension[block.opcode];
-    if (block.blockType === "hat") {
+    if (block.blockType === BLOCK_TYPES.HAT) {
       runtime._hats[opcode] = {
         edgeActivated: block.isEdgeActivated,
-        restartExistingThreads: false,
+        restartExistingThreads: block.shouldRestartExistingThreads,
       };
     }
   }
@@ -171,23 +219,28 @@ function step(runtime, times = 1) {
   }
 }
 
-async function setUp(handlers) {
+async function setUp(scripts) {
   const { virtualMachine, extension } = loadExtension();
-  await virtualMachine.loadProject(makeProject(handlers));
+  await virtualMachine.loadProject(makeProject(scripts));
   registerExtension(virtualMachine.runtime, extension);
+  const runtime = virtualMachine.runtime;
   // A loaded project leaves the step budget unset; the sequencer would then
   // never step a thread.
-  virtualMachine.runtime.currentStepTime = 33.33;
-  const stage = virtualMachine.runtime.getTargetForStage();
+  runtime.currentStepTime = 33.33;
+  const stage = runtime.getTargetForStage();
   return {
-    runtime: virtualMachine.runtime,
+    runtime,
     extension,
     runs: () => stage.variables.runsVar.value,
   };
 }
 
 runtimeTest("the real runtime runs a handler in every target", async () => {
-  const { runtime, extension, runs } = await setUp(["evt", "evt", "evt"]);
+  const { runtime, extension, runs } = await setUp([
+    script(HAT.event, "evt", [INCREMENT]),
+    script(HAT.event, "evt", [INCREMENT]),
+    script(HAT.event, "evt", [INCREMENT]),
+  ]);
 
   extension.emitEvent({ NAME: "evt", DATA: "payload" });
   step(runtime, 2);
@@ -196,7 +249,11 @@ runtimeTest("the real runtime runs a handler in every target", async () => {
 });
 
 runtimeTest("the real runtime gives every handler each emission once", async () => {
-  const { runtime, extension, runs } = await setUp(["evt", "evt", "evt"]);
+  const { runtime, extension, runs } = await setUp([
+    script(HAT.event, "evt", [INCREMENT]),
+    script(HAT.event, "evt", [INCREMENT]),
+    script(HAT.event, "evt", [INCREMENT]),
+  ]);
 
   extension.emitEvent({ NAME: "evt", DATA: "first" });
   extension.emitEvent({ NAME: "evt", DATA: "second" });
@@ -206,15 +263,83 @@ runtimeTest("the real runtime gives every handler each emission once", async () 
 });
 
 runtimeTest("the real runtime keeps emissions out of other events", async () => {
-  const { runtime, extension, runs } = await setUp(["evt", "other", "evt"]);
+  const { runtime, extension, runs } = await setUp([
+    script(HAT.event, "evt", [INCREMENT]),
+    script(HAT.event, "other", [INCREMENT]),
+    script(HAT.event, "evt", [INCREMENT]),
+  ]);
 
   extension.emitEvent({ NAME: "evt", DATA: "payload" });
   step(runtime, 2);
-
   assert.equal(runs(), 2);
 
   extension.emitEvent({ NAME: "other", DATA: "payload" });
   step(runtime, 2);
-
   assert.equal(runs(), 3);
+});
+
+runtimeTest("an emission waits for a handler that is still running", async () => {
+  const { runtime, extension, runs } = await setUp([
+    script(HAT.event, "evt", [WAIT, INCREMENT]),
+  ]);
+
+  extension.emitEvent({ NAME: "evt", DATA: "first" });
+  step(runtime, 1);
+  extension.emitEvent({ NAME: "evt", DATA: "second" });
+
+  for (let frame = 0; frame < 12; frame += 1) {
+    step(runtime, 1);
+    await sleep(20);
+  }
+
+  assert.equal(runs(), 2);
+});
+
+runtimeTest("an action reaches its handler", async () => {
+  const { runtime, extension, runs } = await setUp([
+    script(HAT.action, "act", [INCREMENT]),
+  ]);
+
+  extension.fireAction({ NAME: "act", DATA: "payload" });
+  assert.equal(extension.didErrorOccur(), false, extension.lastErrorMessage());
+
+  step(runtime, 2);
+  assert.equal(runs(), 1);
+});
+
+runtimeTest("a query returns its handler's value", async () => {
+  const { runtime, extension } = await setUp([
+    script(HAT.query, "ask", [RETURN_SEVEN]),
+  ]);
+
+  const answer = extension.querySignal({ NAME: "ask", DATA: "payload" });
+  assert.equal(extension.didErrorOccur(), false, extension.lastErrorMessage());
+
+  step(runtime, 2);
+  assert.equal(await Promise.race([answer, sleep(1000).then(() => "still waiting")]), "7");
+});
+
+runtimeTest("raise error stops the handler script", async () => {
+  const { runtime, extension, runs } = await setUp([
+    script(HAT.action, "act", [RAISE, INCREMENT]),
+  ]);
+
+  extension.fireAction({ NAME: "act", DATA: "payload" });
+  step(runtime, 3);
+
+  assert.equal(runs(), 0, "the blocks after raise error must not run");
+  assert.equal(extension.didErrorOccur(), true);
+  assert.equal(extension.lastErrorMessage(), "boom");
+});
+
+runtimeTest("raise error in a query handler answers the caller", async () => {
+  const { runtime, extension } = await setUp([
+    script(HAT.query, "ask", [RAISE]),
+  ]);
+
+  const answer = extension.querySignal({ NAME: "ask", DATA: "payload" });
+  step(runtime, 2);
+
+  assert.equal(await Promise.race([answer, sleep(1000).then(() => "still waiting")]), "");
+  assert.equal(extension.lastErrorMessage(), "boom");
 });

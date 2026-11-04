@@ -53,12 +53,6 @@ export function setup() {
   // thread can run for a while without the hat predicate running again.
   const HAT_FALLBACK_WINDOW_MS = 60 * 1000;
 
-  // How many polls an event delivery may sit with no handler picking it up
-  // before it is dropped. Without this a delivery nobody can consume (for
-  // example a handler deleted between the emit and the next poll) would hold
-  // up every event emitted after it.
-  const EVENT_IDLE_POLL_LIMIT = 2;
-
   const state = {
     currentData: null,
     errorState: {
@@ -144,6 +138,20 @@ export function setup() {
 
   // The name a hat is wired to, when that name is a literal. A reporter plugged
   // into the NAME slot can only be evaluated by the runtime, so it has none.
+  // A saved project stores a block argument as a shadow block whose field is
+  // named after the shadow's opcode ("TEXT"), not after the argument, so read
+  // whatever single field the shadow holds.
+  function getShadowValue(block) {
+    if (!block || !block.fields) return null;
+    for (const fieldName in block.fields) {
+      const field = block.fields[fieldName];
+      if (field && field.value !== undefined) return String(field.value);
+    }
+    return null;
+  }
+
+  // The name a hat is wired to, when that name is a literal. A reporter plugged
+  // into the NAME slot can only be evaluated by the runtime, so it has none.
   function getLiteralName(target, block) {
     if (block.fields && block.fields.NAME) {
       const fieldValue = block.fields.NAME.value;
@@ -154,10 +162,7 @@ export function setup() {
     if (input.block && input.shadow && input.block !== input.shadow) return null;
     const valueId = input.shadow || input.block;
     if (!valueId) return null;
-    const valueBlock = getBlock(target, valueId);
-    if (!valueBlock || !valueBlock.fields || !valueBlock.fields.NAME) return null;
-    const fieldValue = valueBlock.fields.NAME.value;
-    return fieldValue === undefined ? null : String(fieldValue);
+    return getShadowValue(getBlock(target, valueId));
   }
 
   function isThreadRunning(record) {
@@ -213,18 +218,24 @@ export function setup() {
 
   // An event is broadcast: every handler gets the same data. A delivery is
   // retired once the frame that dispatched it is over, so the next poll starts
-  // the hats afresh instead of handing them the same data a second time.
+  // the hats afresh instead of handing them the same data a second time. A
+  // delivery nobody can take (there is no live handler) is dropped after one
+  // poll, but a handler that is merely busy keeps its queued emissions.
   function retireDispatchedEvents() {
-    for (const queue of state.eventQueues.values()) {
+    for (const [name, queue] of state.eventQueues) {
       while (queue.length > 0 && queue[0].served.size > 0) {
         queue.shift();
       }
       const head = queue[0];
-      if (head) {
-        head.polls += 1;
-        if (head.polls > EVENT_IDLE_POLL_LIMIT) {
-          queue.shift();
-        }
+      if (!head) continue;
+      head.polls += 1;
+      const live = findHandlerBlocks(
+        state.eventHandlers,
+        name,
+        HAT_OPCODES.whenEventEmitted,
+      );
+      if (head.polls > 1 && live.size === 0) {
+        queue.shift();
       }
     }
   }
