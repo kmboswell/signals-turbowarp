@@ -1,9 +1,13 @@
-import { state, raiseErrorInternal } from "./shared.js";
-
+// `state`, `raiseErrorInternal`, `clearErrorStateInternal`, `abandonPendingQuery`
+// and `settleQuery` are declared by the `setup` export in src/index.js and are
+// in scope here once the extension is compiled.
 export function raiseError(args, util) {
   const type = args.TYPE || "Error";
   const message = args.MESSAGE || "An error occurred.";
   raiseErrorInternal(type, message);
+  // The caller of a query must not wait out the timeout when its handler stops
+  // with an error. Settle it now; didErrorOccur() keeps the handler's error.
+  abandonPendingQuery(util);
   if (util) {
     if (typeof util.stopThread === "function") {
       return util.stopThread();
@@ -27,11 +31,7 @@ export function lastErrorMessage() {
 }
 
 export function clearErrorState() {
-  state.errorState = {
-    occurred: false,
-    type: "",
-    message: "",
-  };
+  clearErrorStateInternal();
 }
 
 export function registerErrorType(args) {

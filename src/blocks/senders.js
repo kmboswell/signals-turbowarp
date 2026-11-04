@@ -1,8 +1,15 @@
-import { state, getActiveHandlerCount, raiseErrorInternal, runtime } from "./shared.js";
-
+// `state`, `getActiveHandlerCount`, `raiseErrorInternal`, `clearErrorStateInternal`,
+// `runtime`, `HAT_OPCODES` and `MAX_TIMEOUT_MS` are declared by the `setup`
+// export in src/index.js and are in scope here once the extension is compiled.
 export function fireAction(args) {
+  // did error occur? describes this signal, not the one before it.
+  clearErrorStateInternal();
   const name = args.NAME;
-  const count = getActiveHandlerCount(state.actionHandlers, name);
+  const count = getActiveHandlerCount(
+    state.actionHandlers,
+    name,
+    HAT_OPCODES.whenActionReceived,
+  );
 
   if (count === 0) {
     raiseErrorInternal("SignalsError", "This action/query has no handler.");
@@ -19,7 +26,7 @@ export function fireAction(args) {
   state.actionQueues.get(name).push(args.DATA);
   try {
     if (runtime) {
-      runtime.startHats("signalsextension_whenActionReceived");
+      runtime.startHats(HAT_OPCODES.whenActionReceived);
     }
   } catch (e) {
     raiseErrorInternal("SignalsError", e && e.message ? e.message : String(e));
@@ -27,8 +34,14 @@ export function fireAction(args) {
 }
 
 export function querySignal(args) {
+  // did error occur? describes this signal, not the one before it.
+  clearErrorStateInternal();
   const name = args.NAME;
-  const count = getActiveHandlerCount(state.queryHandlers, name);
+  const count = getActiveHandlerCount(
+    state.queryHandlers,
+    name,
+    HAT_OPCODES.whenQueryRequested,
+  );
 
   if (count === 0) {
     raiseErrorInternal("SignalsError", "This action/query has no handler.");
@@ -45,48 +58,70 @@ export function querySignal(args) {
   }
   state.queryQueues.get(name).push({ id: queryId, data: args.DATA });
 
+  const timeoutMs = state.queryTimeoutMs;
+
   return new Promise((resolve) => {
-    state.queryResolvers.set(queryId, resolve);
+    const pending = { resolve, settled: false, timer: null, thread: null };
+    state.pendingQueries.set(queryId, pending);
+
+    if (timeoutMs > 0) {
+      pending.timer = setTimeout(() => {
+        // A result or error already reached the caller; never overwrite it.
+        if (!state.pendingQueries.has(queryId)) return;
+        raiseErrorInternal(
+          "SignalsError",
+          `Query '${name}' did not return a value within ${timeoutMs} ms.`,
+        );
+        settleQuery(queryId, "");
+      }, timeoutMs);
+    }
 
     try {
       if (runtime) {
-        runtime.startHats("signalsextension_whenQueryRequested");
+        runtime.startHats(HAT_OPCODES.whenQueryRequested);
       }
     } catch (e) {
       raiseErrorInternal("SignalsError", e && e.message ? e.message : String(e));
-      if (state.queryResolvers.has(queryId)) {
-        state.queryResolvers.delete(queryId);
-        const queue = state.queryQueues.get(name);
-        if (queue) {
-          const index = queue.findIndex((request) => request.id === queryId);
-          if (index !== -1) {
-            queue.splice(index, 1);
-          }
+      const queue = state.queryQueues.get(name);
+      if (queue) {
+        const index = queue.findIndex((request) => request.id === queryId);
+        if (index !== -1) {
+          queue.splice(index, 1);
         }
-        resolve("");
       }
-      return;
+      settleQuery(queryId, "");
     }
-
-    setTimeout(() => {
-      if (state.queryResolvers.has(queryId)) {
-        state.queryResolvers.delete(queryId);
-        raiseErrorInternal("SignalsError", "Query did not return a value.");
-        resolve("");
-      }
-    }, 2000);
   });
 }
 
+export function setQueryTimeout(args) {
+  const raw = args.MS;
+  const value = typeof raw === "string" ? raw.trim() : raw;
+  const ms = Math.floor(Number(value));
+  // A blank value converts to 0, which would silently disable the timeout
+  // instead of reporting the empty input.
+  if (value === "" || !Number.isFinite(ms) || ms < 0) {
+    raiseErrorInternal(
+      "SignalsError",
+      `Invalid query timeout '${args.MS}': expected a number of milliseconds, or 0 to disable the timeout.`,
+    );
+    return;
+  }
+  // Longer delays overflow setTimeout() and fire almost immediately.
+  state.queryTimeoutMs = Math.min(ms, MAX_TIMEOUT_MS);
+}
+
 export function emitEvent(args) {
+  // did error occur? describes this event, not the one before it.
+  clearErrorStateInternal();
   const name = args.NAME;
   if (!state.eventQueues.has(name)) {
     state.eventQueues.set(name, []);
   }
-  state.eventQueues.get(name).push(args.DATA);
+  state.eventQueues.get(name).push({ data: args.DATA, served: new Set(), polls: 0 });
   try {
     if (runtime) {
-      runtime.startHats("signalsextension_whenEventEmitted");
+      runtime.startHats(HAT_OPCODES.whenEventEmitted);
     }
   } catch (e) {
     raiseErrorInternal("SignalsError", e && e.message ? e.message : String(e));

@@ -1,5 +1,5 @@
 name: "Signals"
-version: "2.0.0"
+version: "1.0.0"
 description: "Use inter-process communication in your TurboWarp projects."
 author: "Kamix"
 license: "Apache-2.0"
@@ -76,6 +76,14 @@ blocks:
       DATA:
         type: string
         defaultValue: '{"key": "value"}'
+
+  - opcode: setQueryTimeout
+    blockType: command
+    text: "set query timeout (ms) [MS]"
+    arguments:
+      MS:
+        type: number
+        defaultValue: 2000
 
   - opcode: emitEvent
     blockType: command

@@ -18,13 +18,13 @@ _Use inter-process communication in your TurboWarp projects._
 
 ## Overview
 
-Signals is a TurboWarp extension that allows you to send and receive data and broadcasts between different sprites, and even the Stage. It has a custom error system with an error type (example: `SignalsError`) and a custom message, to let your users (and yourself) know what went wrong and why.
+Signals is a TurboWarp extension that allows you to send and receive data and broadcasts between different sprites, and even the Stage. It has a custom error system with an error type (example: `SignalsError`) and a custom message, to let your users (and yourself) know what went wrong.
 
 ### Authors
 
 > **AI DIsclosure:** AI was used in the development of Signals.
 
-- **Lead Developer:** [@kamixfox](https://github.com/kamixfox)
+- **Lead Developer:** [Kane Boswell](https://github.com/kmboswell)
 
 ## Installation
 

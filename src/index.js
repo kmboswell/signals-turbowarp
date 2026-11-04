@@ -9,6 +9,7 @@ export const blocks = {
   returnValue: handlers.returnValue,
   fireAction: senders.fireAction,
   querySignal: senders.querySignal,
+  setQueryTimeout: senders.setQueryTimeout,
   emitEvent: senders.emitEvent,
   getSignalData: senders.getSignalData,
   raiseError: errors.raiseError,
@@ -24,7 +25,37 @@ export const methods = {
   _getErrorTypes: errors._getErrorTypes,
 };
 
+// Everything below is emitted at the top level of the compiled extension, so
+// the block handlers in src/blocks close over these declarations.
 export function setup() {
+  // extend.yml owns the extension id, but the compiled extension cannot read
+  // the manifest, so it is repeated here. Keep the two in sync.
+  const EXTENSION_ID = "signals";
+
+  // Scratch composes an extension block's full opcode as
+  // `<extension id>_<opcode>`, which is what startHats() looks up.
+  const HAT_OPCODES = {
+    whenActionReceived: `${EXTENSION_ID}_whenActionReceived`,
+    whenQueryRequested: `${EXTENSION_ID}_whenQueryRequested`,
+    whenEventEmitted: `${EXTENSION_ID}_whenEventEmitted`,
+  };
+
+  const DEFAULT_QUERY_TIMEOUT_MS = 2000;
+  // setTimeout() treats a delay above this as 1 ms, so a longer timeout has to
+  // be clamped to keep meaning "wait a long time".
+  const MAX_TIMEOUT_MS = 2147483647;
+
+  // Scratch's Thread statuses: 0 while the thread runs, 4 once it is done.
+  // Anything else is parked on a yield or a promise.
+  const THREAD_STATUS_RUNNING = 0;
+  const THREAD_STATUS_DONE = 4;
+
+  // How recently a hat predicate must have run for a hat whose NAME is not a
+  // literal to count as a handler. Deliberately generous: a long frame or a
+  // throttled background tab can pause the runtime for seconds, and a handler
+  // thread can run for a while without the hat predicate running again.
+  const HAT_FALLBACK_WINDOW_MS = 60 * 1000;
+
   const state = {
     currentData: null,
     errorState: {
@@ -40,7 +71,10 @@ export function setup() {
     eventQueues: new Map(),
     queryQueues: new Map(),
     queryCounter: 0,
-    queryResolvers: new Map(),
+    // A timeout of 0 waits until the handler returns.
+    queryTimeoutMs: DEFAULT_QUERY_TIMEOUT_MS,
+    // queryId -> { resolve, settled, timer, thread }
+    pendingQueries: new Map(),
     threadQueryId: new Map(),
     threadData: new Map(),
   };
@@ -50,32 +84,196 @@ export function setup() {
   if (Scratch.vm && Scratch.vm.runtime) {
     runtime = Scratch.vm.runtime;
     runtime.on("BEFORE_EXECUTE", () => {
-      runtime.startHats("signalsextension_whenActionReceived");
-      runtime.startHats("signalsextension_whenQueryRequested");
-      runtime.startHats("signalsextension_whenEventEmitted");
+      settleFinishedQueryThreads();
+      retireDispatchedEvents();
+      runtime.startHats(HAT_OPCODES.whenActionReceived);
+      runtime.startHats(HAT_OPCODES.whenQueryRequested);
+      runtime.startHats(HAT_OPCODES.whenEventEmitted);
     });
   }
 
-  function registerHandler(handlersMap, name, util) {
-    if (!handlersMap.has(name)) {
-      handlersMap.set(name, new Map());
-    }
-    handlersMap.get(name).set(util.blockId, Date.now());
+  // The hat block a predicate is running for. The runtime's block utility
+  // exposes no block id, so the hat is the thread's top block.
+  function getHatBlockId(util) {
+    if (!util) return null;
+    if (util.blockId) return util.blockId;
+    const thread = util.thread;
+    if (!thread) return null;
+    if (thread.topBlock) return thread.topBlock;
+    return typeof thread.peekStack === "function" ? thread.peekStack() : null;
   }
 
-  function getActiveHandlerCount(handlersMap, name) {
-    const blockMap = handlersMap.get(name);
-    if (!blockMap) return 0;
-    const now = Date.now();
-    let count = 0;
-    for (const [blockId, timestamp] of blockMap.entries()) {
-      if (now - timestamp < 300) {
-        count++;
-      } else {
-        blockMap.delete(blockId);
+  // A clone copies its sprite's block ids, so a sprite and its clones all have
+  // the same hat block id. A handler is identified by the target it runs in as
+  // well as by its hat block, or the clones would look like one handler.
+  function handlerId(target, blockId) {
+    const targetId = target && target.id !== undefined ? String(target.id) : "";
+    return `${targetId}:${blockId}`;
+  }
+
+  function getHandlerId(util) {
+    const blockId = getHatBlockId(util);
+    // No block id from the runtime means no target-scoped key either.
+    if (blockId === null || blockId === undefined) return util ? util.thread : null;
+    const target = (util && util.target) || (util && util.thread && util.thread.target);
+    return handlerId(target, blockId);
+  }
+
+  function registerHandler(handlersMap, name, util) {
+    let blockMap = handlersMap.get(name);
+    if (!blockMap) {
+      blockMap = new Map();
+      handlersMap.set(name, blockMap);
+    }
+    blockMap.set(getHandlerId(util), {
+      timestamp: Date.now(),
+      thread: util.thread || null,
+    });
+  }
+
+  function getBlock(target, blockId) {
+    const blocks = target && target.blocks;
+    if (!blocks || !blockId) return null;
+    if (typeof blocks.getBlock === "function") return blocks.getBlock(blockId) || null;
+    return (blocks._blocks && blocks._blocks[blockId]) || null;
+  }
+
+  // Top-level hat blocks of this opcode, keyed by handler id, across every target.
+  function findHats(hatOpcode) {
+    const hats = new Map();
+    if (!runtime || !Array.isArray(runtime.targets)) return hats;
+    for (const target of runtime.targets) {
+      const blocks = target && target.blocks;
+      if (!blocks || !Array.isArray(blocks._scripts)) continue;
+      for (const blockId of blocks._scripts) {
+        const block = getBlock(target, blockId);
+        if (block && block.opcode === hatOpcode) {
+          hats.set(handlerId(target, blockId), { target, block });
+        }
       }
     }
-    return count;
+    return hats;
+  }
+
+  // The name a hat is wired to, when that name is a literal. A reporter plugged
+  // into the NAME slot can only be evaluated by the runtime, so it has none.
+  // A saved project stores a block argument as a shadow block whose field is
+  // named after the shadow's opcode ("TEXT"), not after the argument, so read
+  // whatever single field the shadow holds.
+  function getShadowValue(block) {
+    if (!block || !block.fields) return null;
+    for (const fieldName in block.fields) {
+      const field = block.fields[fieldName];
+      if (field && field.value !== undefined) return String(field.value);
+    }
+    return null;
+  }
+
+  // The name a hat is wired to, when that name is a literal. A reporter plugged
+  // into the NAME slot can only be evaluated by the runtime, so it has none.
+  function getLiteralName(target, block) {
+    if (block.fields && block.fields.NAME) {
+      const fieldValue = block.fields.NAME.value;
+      return fieldValue === undefined ? null : String(fieldValue);
+    }
+    const input = block.inputs && block.inputs.NAME;
+    if (!input) return null;
+    if (input.block && input.shadow && input.block !== input.shadow) return null;
+    const valueId = input.shadow || input.block;
+    if (!valueId) return null;
+    return getShadowValue(getBlock(target, valueId));
+  }
+
+  function isThreadRunning(record) {
+    const thread = record && record.thread;
+    if (!thread) return false;
+    if (typeof thread.status === "number") return thread.status === THREAD_STATUS_RUNNING;
+    return Array.isArray(runtime && runtime.threads) ? runtime.threads.includes(thread) : false;
+  }
+
+  // The hat blocks that would receive a signal called `name`, across targets.
+  function findHandlerBlocks(handlersMap, name, hatOpcode) {
+    const hats = findHats(hatOpcode);
+    const live = new Set();
+
+    // Literal hats are read from the project itself, so a handler stays live
+    // even when its predicate has not run recently.
+    for (const [id, hat] of hats) {
+      if (getLiteralName(hat.target, hat.block) === name) {
+        live.add(id);
+      }
+    }
+
+    const blockMap = handlersMap.get(name);
+    if (!blockMap) return live;
+
+    const now = Date.now();
+    for (const [id, record] of blockMap) {
+      if (live.has(id)) continue;
+      const hat = hats.get(id);
+      if (hat) {
+        const literal = getLiteralName(hat.target, hat.block);
+        if (literal !== null) {
+          // A literal name that does not match can never receive this signal.
+          if (!isThreadRunning(record)) blockMap.delete(id);
+          continue;
+        }
+      }
+      if (isThreadRunning(record)) {
+        live.add(id);
+      } else if (now - record.timestamp < HAT_FALLBACK_WINDOW_MS) {
+        live.add(id);
+      } else {
+        blockMap.delete(id);
+      }
+    }
+
+    return live;
+  }
+
+  function getActiveHandlerCount(handlersMap, name, hatOpcode) {
+    return findHandlerBlocks(handlersMap, name, hatOpcode).size;
+  }
+
+  // An event is broadcast: every handler gets the same data. A delivery is
+  // retired once every live handler has taken it, so a handler that is still
+  // running takes it as soon as it is free instead of missing it. A delivery
+  // nobody can take (there is no live handler) is dropped after one poll.
+  function retireDispatchedEvents() {
+    for (const [name, queue] of state.eventQueues) {
+      if (queue.length === 0) continue;
+      const live = findHandlerBlocks(
+        state.eventHandlers,
+        name,
+        HAT_OPCODES.whenEventEmitted,
+      );
+      while (queue.length > 0) {
+        const head = queue[0];
+        if (live.size === 0) {
+          head.polls += 1;
+          if (head.polls <= 1) break;
+          queue.shift();
+          continue;
+        }
+        let servedByEveryone = true;
+        for (const blockId of live) {
+          if (!head.served.has(blockId)) {
+            servedByEveryone = false;
+            break;
+          }
+        }
+        if (!servedByEveryone) break;
+        queue.shift();
+      }
+    }
+  }
+
+  function clearErrorStateInternal() {
+    state.errorState = {
+      occurred: false,
+      type: "",
+      message: "",
+    };
   }
 
   function raiseErrorInternal(type, message) {
@@ -92,14 +290,52 @@ export function setup() {
     };
   }
 
-  const shared = {
-    state,
-    registerHandler,
-    getActiveHandlerCount,
-    raiseErrorInternal,
-    runtime,
-  };
-  import("./blocks/shared.js").then((mod) => {
-    mod.init(shared);
-  }).catch(() => {});
+  // Each query is settled at most once: the handler's return value, its error,
+  // or the timeout, whichever happens first.
+  function settleQuery(queryId, value) {
+    const pending = state.pendingQueries.get(queryId);
+    if (!pending || pending.settled) return false;
+    pending.settled = true;
+    state.pendingQueries.delete(queryId);
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+      pending.timer = null;
+    }
+    pending.resolve(value);
+    return true;
+  }
+
+  // Forgets the query a handler thread is answering and hands back its id, if
+  // any, so the caller can settle it.
+  function takePendingQuery(thread) {
+    if (thread === undefined || thread === null) return undefined;
+    const queryId = state.threadQueryId.get(thread);
+    if (queryId !== undefined) {
+      state.threadQueryId.delete(thread);
+      state.threadData.delete(thread);
+    }
+    return queryId;
+  }
+
+  function abandonPendingQuery(util) {
+    const queryId = takePendingQuery(util && util.thread);
+    if (queryId !== undefined) {
+      settleQuery(queryId, "");
+    }
+  }
+
+  function isThreadFinished(thread) {
+    return !!thread && typeof thread.status === "number" && thread.status === THREAD_STATUS_DONE;
+  }
+
+  // A handler script that ends without running `return value` never settles its
+  // query on its own, so settle it once its thread is done instead of waiting
+  // out the timeout.
+  function settleFinishedQueryThreads() {
+    for (const [queryId, pending] of state.pendingQueries) {
+      if (!pending.settled && isThreadFinished(pending.thread)) {
+        settleQuery(queryId, "");
+      }
+    }
+  }
 }
