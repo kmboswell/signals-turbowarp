@@ -109,16 +109,19 @@ function makeTarget(hats) {
   };
 }
 
-function makeThread(status = 2) {
-  return { status };
+// Scratch thread statuses: 0 running, 4 done.
+function makeThread(status = 0, topBlock = null) {
+  return { status, topBlock };
 }
 
+// Like the real block utility, this has no block id: a hat predicate learns
+// which hat it is running for from its thread's top block.
 function makeUtil(blockId, thread = makeThread()) {
+  if (!thread.topBlock) thread.topBlock = blockId;
   return {
-    blockId,
     thread,
     stopThread() {
-      thread.status = 0;
+      thread.status = 4;
     },
   };
 }
@@ -189,7 +192,7 @@ test("a handler error settles its query well before the timeout", async () => {
   assert.ok(elapsed < 1000, `the handler's error took ${elapsed}ms to reach the caller`);
   assert.equal(extension.didErrorOccur(), true);
   assert.equal(extension.lastErrorMessage(), "handler exploded");
-  assert.equal(util.thread.status, 0, "raise error should stop the handler thread");
+  assert.equal(util.thread.status, 4, "raise error should stop the handler thread");
 });
 
 test("a handler that ends without return value settles its query", async () => {
@@ -208,7 +211,7 @@ test("a handler that ends without return value settles its query", async () => {
   const handlerUtil = makeUtil("qhat", handlerThread);
   assert.equal(extension.whenQueryRequested({ NAME: "ask" }, handlerUtil), true);
 
-  handlerThread.status = 0;
+  handlerThread.status = 4;
   listeners.get("BEFORE_EXECUTE")();
   assert.equal(await query, "");
 });

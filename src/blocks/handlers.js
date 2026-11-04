@@ -1,5 +1,5 @@
-// `state` and `registerHandler` are declared by the `setup` export in
-// src/index.js and are in scope here once the extension is compiled.
+// `state`, `registerHandler` and `getHatBlockId` are declared by the `setup`
+// export in src/index.js and are in scope here once the extension is compiled.
 export function whenActionReceived(args, util) {
   registerHandler(state.actionHandlers, args.NAME, util);
   const queue = state.actionQueues.get(args.NAME);
@@ -35,8 +35,9 @@ export function whenEventEmitted(args, util) {
   if (!delivery) return false;
   // An event is broadcast: the head delivery stays queued for the whole frame,
   // so every handler hat started in it runs, each exactly once.
-  if (delivery.served.has(util.blockId)) return false;
-  delivery.served.add(util.blockId);
+  const hat = getHatBlockId(util) || util.thread;
+  if (delivery.served.has(hat)) return false;
+  delivery.served.add(hat);
   state.threadData.set(util.thread, delivery.data);
   return true;
 }

@@ -42,10 +42,10 @@ export function setup() {
 
   const DEFAULT_QUERY_TIMEOUT_MS = 2000;
 
-  // Scratch's Thread statuses; a thread that is neither running nor done is
-  // parked on a yield or a promise.
-  const THREAD_STATUS_DONE = 0;
-  const THREAD_STATUS_RUNNING = 2;
+  // Scratch's Thread statuses: 0 while the thread runs, 4 once it is done.
+  // Anything else is parked on a yield or a promise.
+  const THREAD_STATUS_RUNNING = 0;
+  const THREAD_STATUS_DONE = 4;
 
   // How recently a hat predicate must have run for a hat whose NAME is not a
   // literal to count as a handler. Deliberately generous: a long frame or a
@@ -95,13 +95,27 @@ export function setup() {
     });
   }
 
+  // The hat block a predicate is running for. The runtime's block utility
+  // exposes no block id, so the hat is the thread's top block.
+  function getHatBlockId(util) {
+    if (!util) return null;
+    if (util.blockId) return util.blockId;
+    const thread = util.thread;
+    if (!thread) return null;
+    if (thread.topBlock) return thread.topBlock;
+    return typeof thread.peekStack === "function" ? thread.peekStack() : null;
+  }
+
   function registerHandler(handlersMap, name, util) {
     let blockMap = handlersMap.get(name);
     if (!blockMap) {
       blockMap = new Map();
       handlersMap.set(name, blockMap);
     }
-    blockMap.set(util.blockId, { timestamp: Date.now(), thread: util.thread || null });
+    blockMap.set(getHatBlockId(util), {
+      timestamp: Date.now(),
+      thread: util.thread || null,
+    });
   }
 
   function getBlock(target, blockId) {
