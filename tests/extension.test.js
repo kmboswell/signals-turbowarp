@@ -335,6 +335,92 @@ test("a timeout never overwrites a handler error", async () => {
   assert.equal(extension.lastErrorMessage(), "boom");
 });
 
+test("every event handler receives the same emission", () => {
+  const { extension, runtime, listeners } = loadExtension();
+  runtime.targets = [
+    makeTarget([
+      { id: "aHat", opcode: hatOpcode(extension, "whenEventEmitted"), name: "evt" },
+      { id: "bHat", opcode: hatOpcode(extension, "whenEventEmitted"), name: "evt" },
+    ]),
+  ];
+  const a = makeUtil("aHat");
+  const b = makeUtil("bHat");
+  extension.whenEventEmitted({ NAME: "evt" }, a);
+  extension.whenEventEmitted({ NAME: "evt" }, b);
+
+  extension.emitEvent({ NAME: "evt", DATA: "payload" });
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, a), true);
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, b), true);
+  assert.equal(extension.getSignalData({}, a), "payload");
+  assert.equal(extension.getSignalData({}, b), "payload");
+
+  // The delivery retires once the frame that dispatched it is over.
+  listeners.get("BEFORE_EXECUTE")();
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, a), false);
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, b), false);
+});
+
+test("each emission reaches every event handler once", () => {
+  const { extension, runtime, listeners } = loadExtension();
+  runtime.targets = [
+    makeTarget([
+      { id: "aHat", opcode: hatOpcode(extension, "whenEventEmitted"), name: "evt" },
+      { id: "bHat", opcode: hatOpcode(extension, "whenEventEmitted"), name: "evt" },
+    ]),
+  ];
+  const a = makeUtil("aHat");
+  const b = makeUtil("bHat");
+  extension.whenEventEmitted({ NAME: "evt" }, a);
+  extension.whenEventEmitted({ NAME: "evt" }, b);
+
+  extension.emitEvent({ NAME: "evt", DATA: "first" });
+  extension.emitEvent({ NAME: "evt", DATA: "second" });
+
+  for (const data of ["first", "second"]) {
+    assert.equal(extension.whenEventEmitted({ NAME: "evt" }, a), true);
+    assert.equal(extension.whenEventEmitted({ NAME: "evt" }, b), true);
+    assert.equal(extension.getSignalData({}, a), data);
+    assert.equal(extension.getSignalData({}, b), data);
+    listeners.get("BEFORE_EXECUTE")();
+  }
+
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, a), false);
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, b), false);
+});
+
+test("an emission no handler picked up does not stall later ones", () => {
+  const { extension, runtime, listeners } = loadExtension();
+  runtime.targets = [
+    makeTarget([
+      { id: "eHat", opcode: hatOpcode(extension, "whenEventEmitted"), name: "evt" },
+    ]),
+  ];
+
+  extension.emitEvent({ NAME: "evt", DATA: "lost" });
+  for (let poll = 0; poll < 4; poll += 1) {
+    listeners.get("BEFORE_EXECUTE")();
+  }
+
+  extension.emitEvent({ NAME: "evt", DATA: "fresh" });
+  const util = makeUtil("eHat");
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, util), true);
+  assert.equal(extension.getSignalData({}, util), "fresh");
+});
+
+test("actions still allow only one handler", () => {
+  const { extension, runtime } = loadExtension();
+  runtime.targets = [
+    makeTarget([
+      { id: "aHat", opcode: hatOpcode(extension, "whenActionReceived"), name: "act" },
+      { id: "bHat", opcode: hatOpcode(extension, "whenActionReceived"), name: "act" },
+    ]),
+  ];
+
+  extension.fireAction({ NAME: "act", DATA: "1" });
+  assert.equal(extension.didErrorOccur(), true);
+  assert.equal(extension.lastErrorMessage(), "Action has multiple handlers.");
+});
+
 test("the bundle contains no dynamic import", () => {
   assert.equal(bundle.includes("import("), false);
 });

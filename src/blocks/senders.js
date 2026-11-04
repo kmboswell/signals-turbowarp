@@ -113,7 +113,7 @@ export function emitEvent(args) {
   if (!state.eventQueues.has(name)) {
     state.eventQueues.set(name, []);
   }
-  state.eventQueues.get(name).push(args.DATA);
+  state.eventQueues.get(name).push({ data: args.DATA, served: new Set(), polls: 0 });
   try {
     if (runtime) {
       runtime.startHats(HAT_OPCODES.whenEventEmitted);

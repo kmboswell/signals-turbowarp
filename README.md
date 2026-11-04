@@ -35,6 +35,13 @@ A query waits 2000 ms for a handler to return a value, then reports
 `set query timeout (ms) [MS]` to change the wait, or set it to `0` to wait until
 the handler returns.
 
+### Events, actions and queries
+
+`emit event` is a broadcast: every `when event ... emitted` hat in the project
+runs for it, and they all read the same `signal data`. `fire action` and
+`query` go to exactly one handler — a second handler with the same name is
+reported as an error instead of being silently ignored.
+
 ### Authors
 
 > **AI DIsclosure:** AI was used in the development of Signals.

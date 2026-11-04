@@ -53,6 +53,12 @@ export function setup() {
   // thread can run for a while without the hat predicate running again.
   const HAT_FALLBACK_WINDOW_MS = 60 * 1000;
 
+  // How many polls an event delivery may sit with no handler picking it up
+  // before it is dropped. Without this a delivery nobody can consume (for
+  // example a handler deleted between the emit and the next poll) would hold
+  // up every event emitted after it.
+  const EVENT_IDLE_POLL_LIMIT = 2;
+
   const state = {
     currentData: null,
     errorState: {
@@ -82,6 +88,7 @@ export function setup() {
     runtime = Scratch.vm.runtime;
     runtime.on("BEFORE_EXECUTE", () => {
       settleFinishedQueryThreads();
+      retireDispatchedEvents();
       runtime.startHats(HAT_OPCODES.whenActionReceived);
       runtime.startHats(HAT_OPCODES.whenQueryRequested);
       runtime.startHats(HAT_OPCODES.whenEventEmitted);
@@ -146,7 +153,8 @@ export function setup() {
     return Array.isArray(runtime && runtime.threads) ? runtime.threads.includes(thread) : false;
   }
 
-  function getActiveHandlerCount(handlersMap, name, hatOpcode) {
+  // The hat blocks that would receive a signal called `name`, across targets.
+  function findHandlerBlocks(handlersMap, name, hatOpcode) {
     const hats = findHats(hatOpcode);
     const live = new Set();
 
@@ -159,7 +167,7 @@ export function setup() {
     }
 
     const blockMap = handlersMap.get(name);
-    if (!blockMap) return live.size;
+    if (!blockMap) return live;
 
     const now = Date.now();
     for (const [blockId, record] of blockMap) {
@@ -182,7 +190,29 @@ export function setup() {
       }
     }
 
-    return live.size;
+    return live;
+  }
+
+  function getActiveHandlerCount(handlersMap, name, hatOpcode) {
+    return findHandlerBlocks(handlersMap, name, hatOpcode).size;
+  }
+
+  // An event is broadcast: every handler gets the same data. A delivery is
+  // retired once the frame that dispatched it is over, so the next poll starts
+  // the hats afresh instead of handing them the same data a second time.
+  function retireDispatchedEvents() {
+    for (const queue of state.eventQueues.values()) {
+      while (queue.length > 0 && queue[0].served.size > 0) {
+        queue.shift();
+      }
+      const head = queue[0];
+      if (head) {
+        head.polls += 1;
+        if (head.polls > EVENT_IDLE_POLL_LIMIT) {
+          queue.shift();
+        }
+      }
+    }
   }
 
   function clearErrorStateInternal() {

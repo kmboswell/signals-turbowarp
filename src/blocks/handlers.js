@@ -31,11 +31,14 @@ export function whenQueryRequested(args, util) {
 export function whenEventEmitted(args, util) {
   registerHandler(state.eventHandlers, args.NAME, util);
   const queue = state.eventQueues.get(args.NAME);
-  if (queue && queue.length > 0) {
-    state.threadData.set(util.thread, queue.shift());
-    return true;
-  }
-  return false;
+  const delivery = queue && queue[0];
+  if (!delivery) return false;
+  // An event is broadcast: the head delivery stays queued for the whole frame,
+  // so every handler hat started in it runs, each exactly once.
+  if (delivery.served.has(util.blockId)) return false;
+  delivery.served.add(util.blockId);
+  state.threadData.set(util.thread, delivery.data);
+  return true;
 }
 
 export function returnValue(args, util) {
