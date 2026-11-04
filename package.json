@@ -15,6 +15,7 @@
   "type": "module",
   "scripts": {
     "build": "extend build",
+    "pretest": "npm run build",
     "validate": "extend validate",
     "dev": "extend dev",
     "test": "node --test"
