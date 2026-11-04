@@ -31,15 +31,20 @@ export function whenQueryRequested(args, util) {
 export function whenEventEmitted(args, util) {
   registerHandler(state.eventHandlers, args.NAME, util);
   const queue = state.eventQueues.get(args.NAME);
-  const delivery = queue && queue[0];
-  if (!delivery) return false;
-  // An event is broadcast: the head delivery stays queued for the whole frame,
-  // so every handler hat started in it runs, each exactly once.
+  if (!queue) return false;
+  // An event is broadcast: every handler takes each emission exactly once. A
+  // delivery is not retired until every live handler has taken it, so a
+  // handler that was still running when the event arrived takes it from the
+  // queue as soon as it is free. A handler skips the deliveries it already
+  // took, so one slow handler does not hold up the others.
   const hat = getHatBlockId(util) || util.thread;
-  if (delivery.served.has(hat)) return false;
-  delivery.served.add(hat);
-  state.threadData.set(util.thread, delivery.data);
-  return true;
+  for (const delivery of queue) {
+    if (delivery.served.has(hat)) continue;
+    delivery.served.add(hat);
+    state.threadData.set(util.thread, delivery.data);
+    return true;
+  }
+  return false;
 }
 
 export function returnValue(args, util) {

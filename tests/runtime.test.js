@@ -117,6 +117,10 @@ const WAIT = {
   opcode: "control_wait",
   inputs: { DURATION: [1, [5, "0.05"]] },
 };
+const LONG_WAIT = {
+  opcode: "control_wait",
+  inputs: { DURATION: [1, [5, "0.3"]] },
+};
 
 function makeProject(scripts) {
   const targets = [
@@ -342,4 +346,50 @@ runtimeTest("raise error in a query handler answers the caller", async () => {
 
   assert.equal(await Promise.race([answer, sleep(1000).then(() => "still waiting")]), "");
   assert.equal(extension.lastErrorMessage(), "boom");
+});
+
+runtimeTest("a busy handler still takes an emission another handler took", async () => {
+  const { runtime, extension, runs } = await setUp([
+    script(HAT.event, "evt", [WAIT, INCREMENT]),
+    script(HAT.event, "evt", [INCREMENT]),
+  ]);
+
+  extension.emitEvent({ NAME: "evt", DATA: "first" });
+  step(runtime, 1);
+  // The first handler is still waiting, so it cannot take this one yet.
+  extension.emitEvent({ NAME: "evt", DATA: "second" });
+
+  for (let frame = 0; frame < 20; frame += 1) {
+    step(runtime, 1);
+    await sleep(20);
+  }
+
+  assert.equal(runs(), 4, "both handlers should run for both emissions");
+});
+
+runtimeTest("a handler reads the data of its emission", async () => {
+  const { runtime, extension } = await setUp([script(HAT.event, "evt", [WAIT])]);
+
+  extension.emitEvent({ NAME: "evt", DATA: "payload" });
+  step(runtime, 1);
+
+  const thread = runtime.threads.find(
+    (kand) => kand.target && kand.target.getName() === "Handler0",
+  );
+  assert.ok(thread, "the handler should still be running");
+  assert.equal(extension.getSignalData({}, { thread }), "payload");
+});
+
+runtimeTest("a query times out in the real runtime", async () => {
+  const { runtime, extension } = await setUp([script(HAT.query, "ask", [LONG_WAIT])]);
+
+  extension.setQueryTimeout({ MS: 30 });
+  const answer = extension.querySignal({ NAME: "ask", DATA: "payload" });
+  step(runtime, 1);
+
+  assert.equal(await Promise.race([answer, sleep(1000).then(() => "still waiting")]), "");
+  assert.equal(
+    extension.lastErrorMessage(),
+    "Query 'ask' did not return a value within 30 ms.",
+  );
 });

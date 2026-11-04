@@ -38,8 +38,10 @@ the handler returns.
 ### Events, actions and queries
 
 `emit event` is a broadcast: every `when event ... emitted` hat in the project
-runs for it, and they all read the same `signal data`. `fire action` and
-`query` go to exactly one handler — a second handler with the same name is
+runs for it, and they all read the same `signal data`. A hat that is still
+running when an event arrives takes the emission as soon as its current script
+ends — the emission waits in a queue instead of being dropped. `fire action`
+and `query` go to exactly one handler — a second handler with the same name is
 reported as an error instead of being silently ignored.
 
 ### Authors

@@ -217,24 +217,33 @@ export function setup() {
   }
 
   // An event is broadcast: every handler gets the same data. A delivery is
-  // retired once the frame that dispatched it is over, so the next poll starts
-  // the hats afresh instead of handing them the same data a second time. A
-  // delivery nobody can take (there is no live handler) is dropped after one
-  // poll, but a handler that is merely busy keeps its queued emissions.
+  // retired once every live handler has taken it, so a handler that is still
+  // running takes it as soon as it is free instead of missing it. A delivery
+  // nobody can take (there is no live handler) is dropped after one poll.
   function retireDispatchedEvents() {
     for (const [name, queue] of state.eventQueues) {
-      while (queue.length > 0 && queue[0].served.size > 0) {
-        queue.shift();
-      }
-      const head = queue[0];
-      if (!head) continue;
-      head.polls += 1;
+      if (queue.length === 0) continue;
       const live = findHandlerBlocks(
         state.eventHandlers,
         name,
         HAT_OPCODES.whenEventEmitted,
       );
-      if (head.polls > 1 && live.size === 0) {
+      while (queue.length > 0) {
+        const head = queue[0];
+        if (live.size === 0) {
+          head.polls += 1;
+          if (head.polls <= 1) break;
+          queue.shift();
+          continue;
+        }
+        let servedByEveryone = true;
+        for (const blockId of live) {
+          if (!head.served.has(blockId)) {
+            servedByEveryone = false;
+            break;
+          }
+        }
+        if (!servedByEveryone) break;
         queue.shift();
       }
     }

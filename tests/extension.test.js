@@ -412,6 +412,30 @@ test("an emission waits for a handler that is busy", () => {
   assert.equal(extension.getSignalData({}, util), "payload");
 });
 
+test("a busy handler takes the emission another handler already took", () => {
+  const { extension, runtime, listeners } = loadExtension();
+  runtime.targets = [
+    makeTarget([
+      { id: "aHat", opcode: hatOpcode(extension, "whenEventEmitted"), name: "evt" },
+      { id: "bHat", opcode: hatOpcode(extension, "whenEventEmitted"), name: "evt" },
+    ]),
+  ];
+  const a = makeUtil("aHat");
+  const b = makeUtil("bHat");
+
+  extension.emitEvent({ NAME: "evt", DATA: "payload" });
+  // b is free and takes the emission while a is still running, so the delivery
+  // has to stay queued for a instead of retiring with b's run.
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, b), true);
+  listeners.get("BEFORE_EXECUTE")();
+
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, a), true);
+  assert.equal(extension.getSignalData({}, a), "payload");
+  // Neither handler runs the same emission twice.
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, a), false);
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, b), false);
+});
+
 test("an emission no handler picked up does not stall later ones", () => {
   const { extension, runtime, listeners } = loadExtension();
 
