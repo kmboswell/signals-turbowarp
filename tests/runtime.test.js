@@ -380,6 +380,24 @@ runtimeTest("a handler reads the data of its emission", async () => {
   assert.equal(extension.getSignalData({}, { thread }), "payload");
 });
 
+runtimeTest("a clone running the same hat block takes the emission too", async () => {
+  const { runtime, extension, runs } = await setUp([
+    script(HAT.event, "evt", [INCREMENT]),
+  ]);
+
+  const original = runtime.targets.find((target) => !target.isStage);
+  // A clone shares its sprite's blocks, so its hat has the original's block id.
+  const clone = original.makeClone();
+  if (!runtime.targets.includes(clone)) {
+    runtime.addTarget(clone);
+  }
+
+  extension.emitEvent({ NAME: "evt", DATA: "payload" });
+  step(runtime, 3);
+
+  assert.equal(runs(), 2, "the sprite and its clone should both run");
+});
+
 runtimeTest("a query times out in the real runtime", async () => {
   const { runtime, extension } = await setUp([script(HAT.query, "ask", [LONG_WAIT])]);
 

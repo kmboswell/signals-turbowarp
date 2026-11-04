@@ -77,7 +77,7 @@ function hatOpcode(extension, opcode) {
 // Builds one target holding top-level hat blocks. The runtime stores a literal
 // NAME in a shadow block field named after the shadow's opcode ("TEXT");
 // `literal: false` plugs a reporter into the slot instead.
-function makeTarget(hats) {
+function makeTarget(hats, id) {
   const blocks = new Map();
   for (const hat of hats) {
     const valueId = `${hat.id}_value`;
@@ -100,6 +100,7 @@ function makeTarget(hats) {
     });
   }
   return {
+    id,
     blocks: {
       _scripts: hats.map((hat) => hat.id),
       _blocks: Object.fromEntries(blocks),
@@ -117,14 +118,16 @@ function makeThread(status = 0, topBlock = null) {
 
 // Like the real block utility, this has no block id: a hat predicate learns
 // which hat it is running for from its thread's top block.
-function makeUtil(blockId, thread = makeThread()) {
+function makeUtil(blockId, thread = makeThread(), target = undefined) {
   if (!thread.topBlock) thread.topBlock = blockId;
-  return {
+  const util = {
     thread,
     stopThread() {
       thread.status = 4;
     },
   };
+  if (target) util.target = target;
+  return util;
 }
 
 test("every hat opcode passed to startHats exists in getInfo()", async () => {
@@ -434,6 +437,27 @@ test("a busy handler takes the emission another handler already took", () => {
   // Neither handler runs the same emission twice.
   assert.equal(extension.whenEventEmitted({ NAME: "evt" }, a), false);
   assert.equal(extension.whenEventEmitted({ NAME: "evt" }, b), false);
+});
+
+test("a clone running the same hat block takes its own copy of an emission", () => {
+  const { extension, runtime } = loadExtension();
+  const hats = [
+    { id: "eHat", opcode: hatOpcode(extension, "whenEventEmitted"), name: "evt" },
+  ];
+  // A clone copies its sprite's block ids, so both targets have the same hat.
+  const sprite = makeTarget(hats, "sprite");
+  const clone = makeTarget(hats, "clone");
+  runtime.targets = [sprite, clone];
+
+  const original = makeUtil("eHat", makeThread(), sprite);
+  const cloneUtil = makeUtil("eHat", makeThread(), clone);
+  extension.whenEventEmitted({ NAME: "evt" }, original);
+  extension.whenEventEmitted({ NAME: "evt" }, cloneUtil);
+
+  extension.emitEvent({ NAME: "evt", DATA: "payload" });
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, original), true);
+  assert.equal(extension.whenEventEmitted({ NAME: "evt" }, cloneUtil), true);
+  assert.equal(extension.getSignalData({}, cloneUtil), "payload");
 });
 
 test("an emission no handler picked up does not stall later ones", () => {

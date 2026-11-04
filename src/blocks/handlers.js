@@ -37,10 +37,10 @@ export function whenEventEmitted(args, util) {
   // handler that was still running when the event arrived takes it from the
   // queue as soon as it is free. A handler skips the deliveries it already
   // took, so one slow handler does not hold up the others.
-  const hat = getHatBlockId(util) || util.thread;
+  const handler = getHandlerId(util);
   for (const delivery of queue) {
-    if (delivery.served.has(hat)) continue;
-    delivery.served.add(hat);
+    if (delivery.served.has(handler)) continue;
+    delivery.served.add(handler);
     state.threadData.set(util.thread, delivery.data);
     return true;
   }

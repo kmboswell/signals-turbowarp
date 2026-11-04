@@ -41,6 +41,9 @@ export function setup() {
   };
 
   const DEFAULT_QUERY_TIMEOUT_MS = 2000;
+  // setTimeout() treats a delay above this as 1 ms, so a longer timeout has to
+  // be clamped to keep meaning "wait a long time".
+  const MAX_TIMEOUT_MS = 2147483647;
 
   // Scratch's Thread statuses: 0 while the thread runs, 4 once it is done.
   // Anything else is parked on a yield or a promise.
@@ -100,13 +103,29 @@ export function setup() {
     return typeof thread.peekStack === "function" ? thread.peekStack() : null;
   }
 
+  // A clone copies its sprite's block ids, so a sprite and its clones all have
+  // the same hat block id. A handler is identified by the target it runs in as
+  // well as by its hat block, or the clones would look like one handler.
+  function handlerId(target, blockId) {
+    const targetId = target && target.id !== undefined ? String(target.id) : "";
+    return `${targetId}:${blockId}`;
+  }
+
+  function getHandlerId(util) {
+    const blockId = getHatBlockId(util);
+    // No block id from the runtime means no target-scoped key either.
+    if (blockId === null || blockId === undefined) return util ? util.thread : null;
+    const target = (util && util.target) || (util && util.thread && util.thread.target);
+    return handlerId(target, blockId);
+  }
+
   function registerHandler(handlersMap, name, util) {
     let blockMap = handlersMap.get(name);
     if (!blockMap) {
       blockMap = new Map();
       handlersMap.set(name, blockMap);
     }
-    blockMap.set(getHatBlockId(util), {
+    blockMap.set(getHandlerId(util), {
       timestamp: Date.now(),
       thread: util.thread || null,
     });
@@ -119,7 +138,7 @@ export function setup() {
     return (blocks._blocks && blocks._blocks[blockId]) || null;
   }
 
-  // Top-level hat blocks of this opcode, keyed by block id, across every target.
+  // Top-level hat blocks of this opcode, keyed by handler id, across every target.
   function findHats(hatOpcode) {
     const hats = new Map();
     if (!runtime || !Array.isArray(runtime.targets)) return hats;
@@ -129,7 +148,7 @@ export function setup() {
       for (const blockId of blocks._scripts) {
         const block = getBlock(target, blockId);
         if (block && block.opcode === hatOpcode) {
-          hats.set(blockId, { target, block });
+          hats.set(handlerId(target, blockId), { target, block });
         }
       }
     }
@@ -179,9 +198,9 @@ export function setup() {
 
     // Literal hats are read from the project itself, so a handler stays live
     // even when its predicate has not run recently.
-    for (const [blockId, hat] of hats) {
+    for (const [id, hat] of hats) {
       if (getLiteralName(hat.target, hat.block) === name) {
-        live.add(blockId);
+        live.add(id);
       }
     }
 
@@ -189,23 +208,23 @@ export function setup() {
     if (!blockMap) return live;
 
     const now = Date.now();
-    for (const [blockId, record] of blockMap) {
-      if (live.has(blockId)) continue;
-      const hat = hats.get(blockId);
+    for (const [id, record] of blockMap) {
+      if (live.has(id)) continue;
+      const hat = hats.get(id);
       if (hat) {
         const literal = getLiteralName(hat.target, hat.block);
         if (literal !== null) {
           // A literal name that does not match can never receive this signal.
-          if (!isThreadRunning(record)) blockMap.delete(blockId);
+          if (!isThreadRunning(record)) blockMap.delete(id);
           continue;
         }
       }
       if (isThreadRunning(record)) {
-        live.add(blockId);
+        live.add(id);
       } else if (now - record.timestamp < HAT_FALLBACK_WINDOW_MS) {
-        live.add(blockId);
+        live.add(id);
       } else {
-        blockMap.delete(blockId);
+        blockMap.delete(id);
       }
     }
 
