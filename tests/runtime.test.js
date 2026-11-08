@@ -233,6 +233,7 @@ async function setUp(scripts) {
   runtime.currentStepTime = 33.33;
   const stage = runtime.getTargetForStage();
   return {
+    virtualMachine,
     runtime,
     extension,
     runs: () => stage.variables.runsVar.value,
@@ -396,6 +397,52 @@ runtimeTest("a clone running the same hat block takes the emission too", async (
   step(runtime, 3);
 
   assert.equal(runs(), 2, "the sprite and its clone should both run");
+});
+
+runtimeTest("a deleted clone stops counting as a handler", async () => {
+  const { runtime, extension, runs } = await setUp([
+    script(HAT.action, "act", [INCREMENT]),
+  ]);
+
+  const original = runtime.targets.find((target) => !target.isStage);
+  const clone = original.makeClone();
+  if (!runtime.targets.includes(clone)) {
+    runtime.addTarget(clone);
+  }
+  // Let the clone's hat predicate register, as the runtime does each frame.
+  step(runtime, 1);
+  extension.fireAction({ NAME: "act", DATA: "1" });
+  assert.equal(extension.lastErrorMessage(), "Action has multiple handlers.");
+
+  runtime.disposeTarget(clone);
+  extension.clearErrorState();
+  extension.fireAction({ NAME: "act", DATA: "1" });
+  assert.equal(extension.didErrorOccur(), false, extension.lastErrorMessage());
+
+  step(runtime, 2);
+  assert.equal(runs(), 1, "the remaining handler should receive the action");
+});
+
+runtimeTest("loading the project again does not count the previous handlers", async () => {
+  const { virtualMachine, runtime, extension } = await setUp([
+    script(HAT.action, "act", [INCREMENT]),
+  ]);
+
+  step(runtime, 1);
+  extension.fireAction({ NAME: "act", DATA: "1" });
+  assert.equal(extension.didErrorOccur(), false, extension.lastErrorMessage());
+
+  // A long-lived runtime (the editor's) loads project after project into the
+  // same runtime, so the extension keeps the handlers of the previous load.
+  await virtualMachine.loadProject(makeProject([script(HAT.action, "act", [INCREMENT])]));
+  const reloaded = virtualMachine.runtime;
+  registerExtension(reloaded, extension);
+  reloaded.currentStepTime = 33.33;
+  step(reloaded, 2);
+
+  extension.clearErrorState();
+  extension.fireAction({ NAME: "act", DATA: "1" });
+  assert.equal(extension.didErrorOccur(), false, extension.lastErrorMessage());
 });
 
 runtimeTest("a query times out in the real runtime", async () => {

@@ -532,6 +532,41 @@ test("actions still allow only one handler", () => {
   assert.equal(extension.lastErrorMessage(), "Action has multiple handlers.");
 });
 
+test("a handler whose target is gone is not counted", () => {
+  const { extension, runtime } = loadExtension();
+  const target = makeTarget(
+    [{ id: "ahat", opcode: hatOpcode(extension, "whenActionReceived"), name: "act" }],
+    "sprite",
+  );
+  runtime.targets = [target];
+  extension.whenActionReceived({ NAME: "act" }, makeUtil("ahat", makeThread(), target));
+
+  // The target was disposed (a deleted clone, or a project loaded over it)
+  // while the record it made is still in the extension's registry.
+  runtime.targets = [];
+
+  extension.fireAction({ NAME: "act", DATA: "1" });
+  assert.equal(extension.didErrorOccur(), true);
+  assert.equal(extension.lastErrorMessage(), "This action/query has no handler.");
+});
+
+test("a handler whose script was deleted is not counted", () => {
+  const { extension, runtime } = loadExtension();
+  const target = makeTarget(
+    [{ id: "ahat", opcode: hatOpcode(extension, "whenActionReceived"), name: "act" }],
+    "sprite",
+  );
+  runtime.targets = [target];
+  extension.whenActionReceived({ NAME: "act" }, makeUtil("ahat", makeThread(), target));
+
+  // The script is gone from the target, but the target is still alive.
+  target.blocks._scripts = [];
+
+  extension.fireAction({ NAME: "act", DATA: "1" });
+  assert.equal(extension.didErrorOccur(), true);
+  assert.equal(extension.lastErrorMessage(), "This action/query has no handler.");
+});
+
 test("the bundle contains no dynamic import", () => {
   assert.equal(bundle.includes("import("), false);
 });

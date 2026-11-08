@@ -119,15 +119,25 @@ export function setup() {
     return handlerId(target, blockId);
   }
 
+  function getHandlerTarget(util) {
+    return (util && util.target) || (util && util.thread && util.thread.target) || null;
+  }
+
   function registerHandler(handlersMap, name, util) {
     let blockMap = handlersMap.get(name);
     if (!blockMap) {
       blockMap = new Map();
       handlersMap.set(name, blockMap);
     }
+    const blockId = getHatBlockId(util);
     blockMap.set(getHandlerId(util), {
       timestamp: Date.now(),
       thread: util.thread || null,
+      // A handler is identified by the target it runs in, so the target is
+      // kept as well: once it is disposed the record can be recognised as dead
+      // even though its id no longer matches anything in the runtime.
+      target: getHandlerTarget(util),
+      blockId: blockId === null || blockId === undefined ? null : blockId,
     });
   }
 
@@ -191,6 +201,26 @@ export function setup() {
     return Array.isArray(runtime && runtime.threads) ? runtime.threads.includes(thread) : false;
   }
 
+  // A record whose target has been disposed (a deleted clone, or every target
+  // of the project that a long-lived runtime such as an editor's just loaded
+  // over) or whose script has been deleted can never receive a signal again.
+  // Senders must not count it: the timestamp fallback below would report a
+  // second handler for up to HAT_FALLBACK_WINDOW_MS, and a recorded thread that
+  // is still marked as running would keep doing so indefinitely.
+  function isGoneHandler(record) {
+    const target = record && record.target;
+    // Nothing identifies the target, so there is nothing to check.
+    if (!target) return false;
+    if (Array.isArray(runtime && runtime.targets) && runtime.targets.indexOf(target) === -1) {
+      return true;
+    }
+    const blocks = target.blocks;
+    if (blocks && Array.isArray(blocks._scripts) && record.blockId) {
+      return blocks._scripts.indexOf(record.blockId) === -1;
+    }
+    return false;
+  }
+
   // The hat blocks that would receive a signal called `name`, across targets.
   function findHandlerBlocks(handlersMap, name, hatOpcode) {
     const hats = findHats(hatOpcode);
@@ -211,7 +241,14 @@ export function setup() {
     for (const [id, record] of blockMap) {
       if (live.has(id)) continue;
       const hat = hats.get(id);
-      if (hat) {
+      if (!hat) {
+        // The hat is not in the runtime any more. Forget the record instead of
+        // counting it, so a removed target cannot look like a second handler.
+        if (isGoneHandler(record)) {
+          blockMap.delete(id);
+          continue;
+        }
+      } else {
         const literal = getLiteralName(hat.target, hat.block);
         if (literal !== null) {
           // A literal name that does not match can never receive this signal.

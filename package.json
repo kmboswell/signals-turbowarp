@@ -1,6 +1,6 @@
 {
   "name": "signals-turbowarp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Use inter-process communication in your TurboWarp projects.",
   "homepage": "https://github.com/kmboswell/signals-turbowarp#readme",
   "bugs": {
